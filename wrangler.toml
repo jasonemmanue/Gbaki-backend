@@ -1,0 +1,7 @@
+name = "gbaki-backend"
+compatibility_date = "2024-01-01"
+
+[[d1_databases]]
+binding = "gbaki_db"
+database_name = "gbaki-db"
+"database_id": "43856047-56de-4c56-993d-ee7cb6cb6795"

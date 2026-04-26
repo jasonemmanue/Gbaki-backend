@@ -2,16 +2,17 @@
 gbaki_backend/settings.py
 """
 from pathlib import Path
+import os
+from dotenv import load_dotenv
 
-# ── Base dir ────────────────────────────────────────────────────────────────
+load_dotenv()
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# ── Security ─────────────────────────────────────────────────────────────────
-SECRET_KEY = 'django-insecure-gbaki-dev-secret-key-change-in-production'
-DEBUG = True
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'django-insecure-gbaki-dev-key-change-in-prod')
+DEBUG = os.environ.get('DEBUG', 'True') == 'True'
 ALLOWED_HOSTS = ['*']
 
-# ── Apps ──────────────────────────────────────────────────────────────────────
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -19,19 +20,15 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-
-    # Third-party
     'rest_framework',
     'rest_framework.authtoken',
     'corsheaders',
-
-    # Local
+    'storages',
     'core',
 ]
 
-# ── Middleware ────────────────────────────────────────────────────────────────
 MIDDLEWARE = [
-    'corsheaders.middleware.CorsMiddleware',          # must be first
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -43,25 +40,24 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = 'gbaki_backend.urls'
 
-TEMPLATES = [
-    {
-        'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
-        'APP_DIRS': True,
-        'OPTIONS': {
-            'context_processors': [
-                'django.template.context_processors.debug',
-                'django.template.context_processors.request',
-                'django.contrib.auth.context_processors.auth',
-                'django.contrib.messages.context_processors.messages',
-            ],
-        },
-    },
-]
+TEMPLATES = [{
+    'BACKEND': 'django.template.backends.django.DjangoTemplates',
+    'DIRS': [],
+    'APP_DIRS': True,
+    'OPTIONS': {'context_processors': [
+        'django.template.context_processors.debug',
+        'django.template.context_processors.request',
+        'django.contrib.auth.context_processors.auth',
+        'django.contrib.messages.context_processors.messages',
+    ]},
+}]
 
 WSGI_APPLICATION = 'gbaki_backend.wsgi.application'
 
-# ── Database ──────────────────────────────────────────────────────────────────
+# ── Base de données ───────────────────────────────────────────────────────────
+# SQLite local par défaut.
+# Pour Cloudflare D1 : installe django-cloudflare-d1 et configure DATABASE_URL
+# Voir README_CLOUDFLARE.md inclus dans le zip
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
@@ -69,32 +65,32 @@ DATABASES = {
     }
 }
 
-# ── Auth ──────────────────────────────────────────────────────────────────────
-AUTH_PASSWORD_VALIDATORS = [
-    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-     'OPTIONS': {'min_length': 6}},
-]
+# ── Cloudflare R2 (stockage fichiers) ────────────────────────────────────────
+# Remplis ces variables dans ton .env ou via les variables d'environnement
+CF_R2_ACCESS_KEY     = os.environ.get('CF_R2_ACCESS_KEY', '')
+CF_R2_SECRET_KEY     = os.environ.get('CF_R2_SECRET_KEY', '')
+CF_R2_BUCKET_NAME    = os.environ.get('CF_R2_BUCKET_NAME', 'gbaki-documents')
+CF_R2_ENDPOINT_URL   = os.environ.get('CF_R2_ENDPOINT_URL', '')   # ex: https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+CF_R2_PUBLIC_DOMAIN  = os.environ.get('CF_R2_PUBLIC_DOMAIN', '')  # ex: https://pub-xxx.r2.dev  (si bucket public)
 
-# ── DRF ───────────────────────────────────────────────────────────────────────
+# URL signée expirée après N secondes (pour téléchargements privés)
+CF_R2_PRESIGN_EXPIRY = int(os.environ.get('CF_R2_PRESIGN_EXPIRY', '3600'))
+
+# ── DRF ──────────────────────────────────────────────────────────────────────
 REST_FRAMEWORK = {
-    'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.TokenAuthentication',
-    ],
-    'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.IsAuthenticatedOrReadOnly',
-    ],
+    'DEFAULT_AUTHENTICATION_CLASSES': ['rest_framework.authentication.TokenAuthentication'],
+    'DEFAULT_PERMISSION_CLASSES':     ['rest_framework.permissions.IsAuthenticatedOrReadOnly'],
 }
 
-# ── CORS ──────────────────────────────────────────────────────────────────────
-CORS_ALLOW_ALL_ORIGINS = True   # dev only — restreindre en prod
+# ── CORS ─────────────────────────────────────────────────────────────────────
+CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
 
-# ── Internationalisation ──────────────────────────────────────────────────────
+# ── I18n ─────────────────────────────────────────────────────────────────────
 LANGUAGE_CODE = 'fr-fr'
-TIME_ZONE = 'Africa/Abidjan'
-USE_I18N = True
-USE_TZ = True
+TIME_ZONE     = 'Africa/Abidjan'
+USE_I18N      = True
+USE_TZ        = True
 
-# ── Static ────────────────────────────────────────────────────────────────────
 STATIC_URL = '/static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'

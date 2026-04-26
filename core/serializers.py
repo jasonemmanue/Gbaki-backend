@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Class, Profile, Subject, AcademicYear, DocumentType, Document
+from .models import Class, Profile, Subject, AcademicYear, DocumentType, Document, Teacher
 
 
 class ClassSerializer(serializers.ModelSerializer):
@@ -32,54 +32,48 @@ class DocumentTypeSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
+class TeacherSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Teacher
+        fields = '__all__'
+
+
 class DocumentSerializer(serializers.ModelSerializer):
-    teachers = serializers.SerializerMethodField()
-    class_info = serializers.SerializerMethodField()
-    subject = serializers.SerializerMethodField()
+    teachers      = serializers.SerializerMethodField()
+    class_info    = serializers.SerializerMethodField()
+    subject       = serializers.SerializerMethodField()
+    subject_id_val= serializers.SerializerMethodField()
     document_type = serializers.SerializerMethodField()
     academic_year = serializers.SerializerMethodField()
-    uploaded_by = serializers.SerializerMethodField()
-    clickable_link = serializers.SerializerMethodField()
-    previewable = serializers.SerializerMethodField()
-    badges = serializers.SerializerMethodField()
+    uploaded_by   = serializers.SerializerMethodField()
+    clickable_link= serializers.SerializerMethodField()
+    previewable   = serializers.SerializerMethodField()
+    badges        = serializers.SerializerMethodField()
 
     class Meta:
         model = Document
         fields = [
-            'id',
-            'title',
-            'description',
-            'file_name',
-            'clickable_link',
-            'mime_type',
-            'file_size',
-
-            'class_info',
-            'subject',
-            'document_type',
-            'academic_year',
-
-            'uploaded_by',
-            'teachers',
-
-            'status',
-            'is_published',
-            'created_at',
-            'updated_at',
-            'previewable',
-            'badges',
+            'id', 'title', 'description', 'file_name',
+            'clickable_link', 'mime_type', 'file_size',
+            'class_info', 'subject', 'subject_id_val',
+            'document_type', 'academic_year',
+            'uploaded_by', 'teachers',
+            'status', 'is_published',
+            'created_at', 'updated_at',
+            'previewable', 'badges',
+            # FK ids pour l'admin
+            'class_id', 'subject_id', 'academic_year_id', 'document_type_id',
         ]
 
     def get_class_info(self, obj):
-        if not obj.class_id:
-            return None
-        return {
-            "code": obj.class_id.code,
-            "label": obj.class_id.label,
-        }
+        if not obj.class_id: return None
+        return {'code': obj.class_id.code, 'label': obj.class_id.label, 'id': str(obj.class_id.id)}
 
     def get_subject(self, obj):
         return obj.subject_id.name if obj.subject_id else None
+
+    def get_subject_id_val(self, obj):
+        return str(obj.subject_id.id) if obj.subject_id else None
 
     def get_document_type(self, obj):
         return obj.document_type_id.label if obj.document_type_id else None
@@ -88,70 +82,36 @@ class DocumentSerializer(serializers.ModelSerializer):
         return obj.academic_year_id.label if obj.academic_year_id else None
 
     def get_uploaded_by(self, obj):
-        if not obj.uploaded_by:
-            return None
+        if not obj.uploaded_by: return None
         return obj.uploaded_by.full_name or obj.uploaded_by.email
 
     def get_teachers(self, obj):
         return [
-            {
-                "name": p.full_name or p.email,
-                "email": p.email
-            }
-            for p in obj.teachers.all()
+            {'id': str(t.id), 'name': t.full_name, 'email': t.email or '', 'department': t.department or ''}
+            for t in obj.teachers.all()
         ]
 
     def get_clickable_link(self, obj):
+        # Retourne le chemin brut — le frontend appelle /api/documents/{id}/download/
         return obj.file_path if obj.file_path else None
 
     def get_previewable(self, obj):
-        if not obj.mime_type:
-            return False
-
-        previewable_types = {
-            "application/pdf",
-            "image/png",
-            "image/jpeg",
-            "image/webp",
-            "text/plain",
+        if not obj.mime_type: return False
+        return obj.mime_type in {
+            'application/pdf', 'image/png', 'image/jpeg',
+            'image/webp', 'image/gif', 'text/plain',
         }
-        return obj.mime_type in previewable_types
 
     def get_badges(self, obj):
         badges = []
-
-        # Type MIME simplifié
         if obj.mime_type:
             mime_map = {
-                "application/pdf": "PDF",
-                "image/png": "PNG",
-                "image/jpeg": "JPG",
-                "image/jpg": "JPG",
-                "image/webp": "WEBP",
-                "text/plain": "TXT",
+                'application/pdf': 'PDF', 'image/png': 'PNG',
+                'image/jpeg': 'JPG', 'image/webp': 'WEBP', 'text/plain': 'TXT',
             }
             badges.append(mime_map.get(obj.mime_type, obj.mime_type.upper()))
-
-        # Classe
-        if obj.class_id and obj.class_id.code:
-            badges.append(obj.class_id.code)
-
-        # Type de document
-        if obj.document_type_id and obj.document_type_id.label:
-            badges.append(obj.document_type_id.label)
-
-        # Matière
-        if obj.subject_id and obj.subject_id.name:
-            badges.append(obj.subject_id.name)
-
-        # Statut publication
-        if obj.is_published:
-            badges.append("Publié")
-        else:
-            badges.append("Brouillon")
-
-        # Statut métier
-        if obj.status:
-            badges.append(obj.status.capitalize())
-
+        if obj.class_id and obj.class_id.code: badges.append(obj.class_id.code)
+        if obj.document_type_id: badges.append(obj.document_type_id.label)
+        if obj.subject_id: badges.append(obj.subject_id.name)
+        badges.append('Publié' if obj.is_published else 'Brouillon')
         return badges
