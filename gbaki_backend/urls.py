@@ -1,6 +1,3 @@
-"""
-gbaki_backend/urls.py
-"""
 from django.contrib import admin
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
@@ -8,9 +5,8 @@ from core.views import (
     ClassViewSet, ProfileViewSet, SubjectViewSet,
     AcademicYearViewSet, DocumentTypeViewSet, DocumentViewSet, TeacherViewSet,
     autocomplete_teachers, autocomplete_documents,
-    upload_document,
 )
-from core.auth_views import register, login_view, logout_view, me
+from core.auth_views import register, login_view, logout_view, me, forgot_password, verify_otp, reset_password
 
 router = DefaultRouter()
 router.register(r'classes',        ClassViewSet)
@@ -22,21 +18,15 @@ router.register(r'documents',      DocumentViewSet)
 router.register(r'teachers',       TeacherViewSet)
 
 urlpatterns = [
-    path('admin/',                          admin.site.urls),
-
-    # Auth
-    path('api/auth/register/',              register,             name='auth-register'),
-    path('api/auth/login/',                 login_view,           name='auth-login'),
-    path('api/auth/logout/',                logout_view,          name='auth-logout'),
-    path('api/auth/me/',                    me,                   name='auth-me'),
-
-    # Upload PDF → Cloudflare R2  (AVANT include(router.urls) pour éviter les conflits)
-    path('api/documents/upload/',           upload_document,      name='document-upload'),
-
-    # Autocomplete
-    path('api/autocomplete/teachers/',      autocomplete_teachers,  name='autocomplete-teachers'),
-    path('api/autocomplete/documents/',     autocomplete_documents, name='autocomplete-docs'),
-
-    # REST API (ViewSets)
-    path('api/',                            include(router.urls)),
+    path('admin/',                      admin.site.urls),
+    path('api/auth/register/',          register,                name='auth-register'),
+    path('api/auth/login/',             login_view,              name='auth-login'),
+    path('api/auth/logout/',            logout_view,             name='auth-logout'),
+    path('api/auth/me/',                me,                      name='auth-me'),
+    path('api/auth/forgot-password/',   forgot_password,         name='auth-forgot-password'),
+    path('api/auth/verify-otp/',        verify_otp,              name='auth-verify-otp'),
+    path('api/auth/reset-password/',    reset_password,          name='auth-reset-password'),
+    path('api/autocomplete/teachers/',  autocomplete_teachers,   name='autocomplete-teachers'),
+    path('api/autocomplete/documents/', autocomplete_documents,  name='autocomplete-docs'),
+    path('api/',                        include(router.urls)),
 ]

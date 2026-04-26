@@ -1,41 +1,49 @@
 # Configuration Cloudflare D1 + R2 pour GBAKI Backend
 
-node --version
-npm --version
-
-npm install -g wrangler
-
-npx wrangler --version
-
-npx wrangler login
-
 ## 1. Cloudflare D1 (Base de données)
 
 ### Créer la base D1
 ```bash
-npx wrangler d1 create gbaki-db
+wrangler d1 create gbaki-db
 ```
 Copie l'ID affiché dans ton wrangler.toml.
 
 ### Exporter la structure SQLite → D1
 ```bash
 # Génère le schéma SQL depuis Django
-pip install django-storages boto3
-
 python manage.py sqlmigrate core 0001 > schema.sql
 # ...répète pour chaque migration 0002→0006
 
 # Importe dans D1
-npx wrangler d1 execute gbaki-db --file=schema.sql
+wrangler d1 execute gbaki-db --file=schema.sql
 ```
 
 ### Connexion Django ↔ D1
+D1 est compatible SQLite. Pour les environnements de prod sur Cloudflare Workers,
+utilise le package `django-cloudflare-d1` :
+```bash
+pip install django-cloudflare-d1
+```
+Puis dans settings.py (prod) :
+```python
+DATABASES = {
+    'default': {
+        'ENGINE': 'django_cloudflare_d1',
+        'NAME': 'gbaki-db',
+        'D1_ACCOUNT_ID': os.environ['CF_ACCOUNT_ID'],
+        'D1_API_TOKEN':  os.environ['CF_D1_API_TOKEN'],
+        'D1_DATABASE_ID':os.environ['CF_D1_DATABASE_ID'],
+    }
+}
+```
+
+---
 
 ## 2. Cloudflare R2 (Stockage fichiers)
 
 ### Créer le bucket R2
 ```bash
-npx wrangler r2 bucket create gbaki-documents
+wrangler r2 bucket create gbaki-documents
 ```
 
 ### Variables d'environnement (.env)
@@ -47,11 +55,6 @@ CF_R2_BUCKET_NAME=gbaki-documents
 CF_R2_PUBLIC_DOMAIN=https://pub-xxx.r2.dev   # si bucket public
 CF_R2_PRESIGN_EXPIRY=3600
 ```
-
-
-pip install python-dotenv
-
-python manage.py shell  /// pour les tests
 
 ### Uploader un fichier vers R2
 ```bash
@@ -68,5 +71,5 @@ sakamemmanuel@gmail.com → https://dash.cloudflare.com
 ```bash
 python manage.py migrate
 python manage.py createsuperuser
-python manage.py runserver 9000
+python manage.py runserver 8000
 ```

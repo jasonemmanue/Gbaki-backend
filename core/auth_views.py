@@ -3,12 +3,25 @@
 # ================================================================
 from django.contrib.auth.models import User
 from django.contrib.auth import authenticate
+from django.core.mail import send_mail
+from django.conf import settings as django_settings
+from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.authtoken.models import Token
 from .models import Profile
+import random
+import string
+
+# Stockage temporaire des codes OTP en mémoire
+# { email: { 'code': '1234', 'expires': datetime } }
+_otp_store: dict = {}
+
+
+def _generate_otp() -> str:
+    return ''.join(random.choices(string.digits, k=4))
 
 
 def _profile_data(profile):
@@ -150,3 +163,142 @@ def me(request):
             is_active=True,
         )
     return Response(_profile_data(profile))
+
+
+# ── Mot de passe oublié ─────────────────────────────────────────────────────
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def forgot_password(request):
+    """
+    POST /api/auth/forgot-password/
+    Body : { "email": "user@example.com" }
+
+    Génère un OTP 4 chiffres, l'envoie par email, le stocke en mémoire 10 min.
+    Répond toujours 200 (pour ne pas révéler si l'email existe ou non).
+    """
+    email = request.data.get('email', '').strip().lower()
+    if not email:
+        return Response({'error': 'Email requis.'}, status=400)
+
+    # Vérifier que l'email existe en base
+    try:
+        user = User.objects.get(email__iexact=email)
+    except User.DoesNotExist:
+        # Réponse générique pour ne pas révéler les comptes existants
+        return Response({'message': 'Si cet email est enregistré, un code vous a été envoyé.'})
+
+    # Générer l'OTP
+    otp = _generate_otp()
+    _otp_store[email] = {
+        'code': otp,
+        'expires': timezone.now() + timezone.timedelta(minutes=10),
+    }
+
+    # Envoyer l'email
+    email_user = django_settings.EMAIL_HOST_USER
+    email_pass = django_settings.EMAIL_HOST_PASSWORD
+
+    if not email_user or not email_pass:
+        return Response(
+            {'error': f'Configuration email manquante. EMAIL_HOST_USER="{email_user}" non défini dans .env.'},
+            status=500
+        )
+
+    try:
+        send_mail(
+            subject='GBAKI — Votre code de réinitialisation',
+            message=(
+                f"Bonjour {user.first_name or user.email},\n\n"
+                f"Votre code de réinitialisation de mot de passe est :\n\n"
+                f"    {otp}\n\n"
+                f"Ce code est valable 10 minutes.\n"
+                f"Si vous n'avez pas demandé de réinitialisation, ignorez cet email.\n\n"
+                f"— L'équipe GBAKI / ENSEA Data Science Club"
+            ),
+            from_email=email_user,
+            recipient_list=[email],
+            fail_silently=False,
+        )
+    except Exception as e:
+        return Response({'error': f'Erreur envoi email : {str(e)}'}, status=500)
+
+    return Response({'message': 'Si cet email est enregistré, un code vous a été envoyé.'})
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def verify_otp(request):
+    """
+    POST /api/auth/verify-otp/
+    Body : { "email": "user@example.com", "code": "1234" }
+
+    Vérifie que le code est valide et non expiré.
+    Répond 200 + reset_token si OK, 400 sinon.
+    """
+    email = request.data.get('email', '').strip().lower()
+    code  = request.data.get('code', '').strip()
+
+    if not email or not code:
+        return Response({'error': 'Email et code requis.'}, status=400)
+
+    entry = _otp_store.get(email)
+    if not entry:
+        return Response({'error': 'Aucun code trouvé pour cet email.'}, status=400)
+    if timezone.now() > entry['expires']:
+        del _otp_store[email]
+        return Response({'error': 'Code expiré. Demandez un nouveau code.'}, status=400)
+    if entry['code'] != code:
+        return Response({'error': 'Code incorrect.'}, status=400)
+
+    # Code valide → on génère un reset_token éphémère (20 chars) et on l'associe à l'email
+    reset_token = ''.join(random.choices(string.ascii_letters + string.digits, k=20))
+    # On réutilise _otp_store pour stocker le reset_token 15 min
+    _otp_store[email] = {
+        'code': code,
+        'reset_token': reset_token,
+        'expires': timezone.now() + timezone.timedelta(minutes=15),
+    }
+
+    return Response({'reset_token': reset_token, 'email': email})
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def reset_password(request):
+    """
+    POST /api/auth/reset-password/
+    Body : { "email": "...", "reset_token": "...", "new_password": "..." }
+
+    Vérifie le reset_token, met à jour le mot de passe, invalide le token.
+    """
+    email       = request.data.get('email', '').strip().lower()
+    reset_token = request.data.get('reset_token', '').strip()
+    new_password = request.data.get('new_password', '')
+
+    if not email or not reset_token or not new_password:
+        return Response({'error': 'Champs manquants.'}, status=400)
+    if len(new_password) < 6:
+        return Response({'error': 'Le mot de passe doit contenir au moins 6 caractères.'}, status=400)
+
+    entry = _otp_store.get(email)
+    if not entry or entry.get('reset_token') != reset_token:
+        return Response({'error': 'Token invalide ou expiré.'}, status=400)
+    if timezone.now() > entry['expires']:
+        del _otp_store[email]
+        return Response({'error': 'Session expirée. Recommencez la procédure.'}, status=400)
+
+    # Mettre à jour le mot de passe
+    try:
+        user = User.objects.get(email__iexact=email)
+        user.set_password(new_password)
+        user.save()
+        # Invalider tous les tokens de session existants
+        Token.objects.filter(user=user).delete()
+    except User.DoesNotExist:
+        return Response({'error': 'Utilisateur introuvable.'}, status=404)
+
+    # Nettoyer l'OTP store
+    del _otp_store[email]
+
+    return Response({'message': 'Mot de passe réinitialisé avec succès. Vous pouvez vous connecter.'})
