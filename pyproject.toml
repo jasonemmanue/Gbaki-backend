@@ -1,4 +1,2 @@
-@'
-[tool.vercel.scripts]
+﻿[tool.vercel.scripts]
 build = "python vercel_build.py"
-'@ | Set-Content -Encoding UTF8 pyproject.toml
