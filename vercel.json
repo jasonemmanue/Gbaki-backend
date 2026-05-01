@@ -1,6 +1,5 @@
 {
   "version": 2,
-  "buildCommand": "bash build_files.sh",
   "builds": [
     {
       "src": "gbaki_backend/wsgi.py",
@@ -9,17 +8,9 @@
         "maxLambdaSize": "15mb",
         "runtime": "python3.12"
       }
-    },
-    {
-      "src": "staticfiles/**",
-      "use": "@vercel/static"
     }
   ],
   "routes": [
-    {
-      "src": "/static/(.*)",
-      "dest": "/staticfiles/$1"
-    },
     {
       "src": "/(.*)",
       "dest": "gbaki_backend/wsgi.py"
