@@ -1,6 +1,5 @@
 {
   "version": 2,
-  "buildCommand": "pip install -r requirements.txt && python vercel_build.py",
   "builds": [
     {
       "src": "gbaki_backend/wsgi.py",

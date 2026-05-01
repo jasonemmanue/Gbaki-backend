@@ -1,14 +1,32 @@
 #!/bin/bash
-# Script exécuté par Vercel lors du build
 set -e
 
-echo "==> Installation des dépendances..."
+echo "==> Installation des dependances..."
 pip install -r requirements.txt
 
-echo "==> Collecte des fichiers statiques..."
-python manage.py collectstatic --noinput
+echo "==> collectstatic..."
+python manage.py collectstatic --noinput || echo "collectstatic warning (non bloquant)"
 
-echo "==> Migrations..."
+echo "==> migrate..."
 python manage.py migrate --noinput
 
-echo "==> Build terminé ✅"
+echo "==> Superuser..."
+python manage.py shell << 'PYEOF'
+import os
+from django.contrib.auth.models import User
+
+email    = os.environ.get('DJANGO_SUPERUSER_EMAIL', '')
+password = os.environ.get('DJANGO_SUPERUSER_PASSWORD', '')
+username = os.environ.get('DJANGO_SUPERUSER_USERNAME', 'admin')
+
+if email and password:
+    if not User.objects.filter(username=username).exists():
+        User.objects.create_superuser(username, email, password)
+        print(f"Superuser '{username}' cree")
+    else:
+        print(f"Superuser '{username}' existe deja")
+else:
+    print("Variables superuser non definies, skipped")
+PYEOF
+
+echo "==> Build termine OK"
