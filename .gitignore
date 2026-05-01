@@ -1,8 +1,30 @@
+# Python
 .venv/
 venv/
 ENV/
-db.sqlite3
-*.pyc
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Django
+db.sqlite3
+staticfiles/
+media/
+
+# Environnement
 .env
+
+# IDE
+.idea/
 .vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Déploiement
+*.log

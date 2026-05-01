@@ -1,18 +1,22 @@
 """
-gbaki_backend/settings.py
+gbaki_backend/settings.py  —  Production-ready (Railway)
 """
 from pathlib import Path
 import os
+import dj_database_url
 from dotenv import load_dotenv
 
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'django-insecure-gbaki-dev-key-change-in-prod')
-DEBUG = os.environ.get('DEBUG', 'True') == 'True'
-ALLOWED_HOSTS = ['*']
+# ── Sécurité ──────────────────────────────────────────────────────────────────
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'change-me-in-prod')
+DEBUG      = os.environ.get('DEBUG', 'False') == 'True'
 
+ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '*').split(',')
+
+# ── Apps ──────────────────────────────────────────────────────────────────────
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -20,16 +24,20 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    # Third-party
     'rest_framework',
     'rest_framework.authtoken',
     'corsheaders',
     'storages',
+    # Local
     'core',
 ]
 
+# ── Middleware ────────────────────────────────────────────────────────────────
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',   # fichiers statiques en prod
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -55,52 +63,69 @@ TEMPLATES = [{
 WSGI_APPLICATION = 'gbaki_backend.wsgi.application'
 
 # ── Base de données ───────────────────────────────────────────────────────────
-# SQLite local par défaut.
-# Pour Cloudflare D1 : installe django-cloudflare-d1 et configure DATABASE_URL
-# Voir README_CLOUDFLARE.md inclus dans le zip
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+# Railway fournit DATABASE_URL automatiquement (PostgreSQL)
+# En local sans DATABASE_URL : SQLite de secours
+DATABASE_URL = os.environ.get('DATABASE_URL')
+
+if DATABASE_URL:
+    DATABASES = {
+        'default': dj_database_url.parse(DATABASE_URL, conn_max_age=600)
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 # ── Cloudflare R2 (stockage fichiers) ────────────────────────────────────────
-# Remplis ces variables dans ton .env ou via les variables d'environnement
-CF_R2_ACCESS_KEY     = os.environ.get('CF_R2_ACCESS_KEY', '')
-CF_R2_SECRET_KEY     = os.environ.get('CF_R2_SECRET_KEY', '')
-CF_R2_BUCKET_NAME    = os.environ.get('CF_R2_BUCKET_NAME', 'gbaki-documents')
-CF_R2_ENDPOINT_URL   = os.environ.get('CF_R2_ENDPOINT_URL', '')   # ex: https://<ACCOUNT_ID>.r2.cloudflarestorage.com
-CF_R2_PUBLIC_DOMAIN  = os.environ.get('CF_R2_PUBLIC_DOMAIN', '')  # ex: https://pub-xxx.r2.dev  (si bucket public)
-
-# URL signée expirée après N secondes (pour téléchargements privés)
+CF_R2_ACCESS_KEY    = os.environ.get('CF_R2_ACCESS_KEY', '')
+CF_R2_SECRET_KEY    = os.environ.get('CF_R2_SECRET_KEY', '')
+CF_R2_BUCKET_NAME   = os.environ.get('CF_R2_BUCKET_NAME', 'gbaki-documents')
+CF_R2_ENDPOINT_URL  = os.environ.get('CF_R2_ENDPOINT_URL', '')
+CF_R2_PUBLIC_DOMAIN = os.environ.get('CF_R2_PUBLIC_DOMAIN', '')
 CF_R2_PRESIGN_EXPIRY = int(os.environ.get('CF_R2_PRESIGN_EXPIRY', '3600'))
 
 # ── DRF ──────────────────────────────────────────────────────────────────────
 REST_FRAMEWORK = {
-    'DEFAULT_AUTHENTICATION_CLASSES': ['rest_framework.authentication.TokenAuthentication'],
-    'DEFAULT_PERMISSION_CLASSES':     ['rest_framework.permissions.IsAuthenticatedOrReadOnly'],
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.TokenAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticatedOrReadOnly',
+    ],
 }
 
 # ── CORS ─────────────────────────────────────────────────────────────────────
-CORS_ALLOW_ALL_ORIGINS = True
-CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_ALL_ORIGINS  = os.environ.get('CORS_ALLOW_ALL', 'True') == 'True'
+CORS_ALLOW_CREDENTIALS  = True
 
-# ── I18n ─────────────────────────────────────────────────────────────────────
+# ── Internationalisation ──────────────────────────────────────────────────────
 LANGUAGE_CODE = 'fr-fr'
 TIME_ZONE     = 'Africa/Abidjan'
 USE_I18N      = True
 USE_TZ        = True
 
-STATIC_URL = '/static/'
+# ── Fichiers statiques (WhiteNoise) ──────────────────────────────────────────
+STATIC_URL  = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# ── Email (mot de passe oublié) ───────────────────────────────────────────────
+# ── Email ─────────────────────────────────────────────────────────────────────
 EMAIL_BACKEND       = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST          = 'smtp.gmail.com'
 EMAIL_PORT          = 587
 EMAIL_USE_TLS       = True
 EMAIL_HOST_USER     = os.environ.get('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
-# FROM doit être identique à EMAIL_HOST_USER pour éviter le rejet par les serveurs Microsoft
 DEFAULT_FROM_EMAIL  = os.environ.get('EMAIL_HOST_USER', '')
+
+# ── Sécurité HTTPS (activé en prod, désactivé en local) ──────────────────────
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SECURE_SSL_REDIRECT     = False   # Railway gère le HTTPS en amont
+    SESSION_COOKIE_SECURE   = True
+    CSRF_COOKIE_SECURE      = True
