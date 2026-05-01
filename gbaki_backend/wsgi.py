@@ -1,4 +1,9 @@
 import os
-from django.core.wsgi import get_wsgi_application
+import sys
+
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'gbaki_backend.settings')
-application = get_wsgi_application()
+
+from django.core.wsgi import get_wsgi_application
+
+app = get_wsgi_application()
+application = app

@@ -117,3 +117,25 @@ class Document(models.Model):
 
     def __str__(self):
         return self.title
+
+
+class OTPCode(models.Model):
+    """
+    Stockage persistant des codes OTP pour la réinitialisation de mot de passe.
+    Remplace le dictionnaire en mémoire (_otp_store) incompatible avec le serverless.
+    """
+    email       = models.EmailField(db_index=True)
+    code        = models.CharField(max_length=4)
+    reset_token = models.CharField(max_length=20, blank=True, default='')
+    expires_at  = models.DateTimeField()
+    created_at  = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def is_expired(self):
+        from django.utils import timezone
+        return timezone.now() > self.expires_at
+
+    def __str__(self):
+        return f"OTP({self.email}, expires={self.expires_at})"
