@@ -1,32 +1,21 @@
+@'
 #!/bin/bash
 set -e
-
-echo "==> Installation des dependances..."
 pip install -r requirements.txt
-
-echo "==> collectstatic..."
-python manage.py collectstatic --noinput || echo "collectstatic warning (non bloquant)"
-
-echo "==> migrate..."
+python manage.py collectstatic --noinput
 python manage.py migrate --noinput
-
-echo "==> Superuser..."
-python manage.py shell << 'PYEOF'
-import os
+python -c "
+import os, django
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'gbaki_backend.settings')
+django.setup()
 from django.contrib.auth.models import User
-
-email    = os.environ.get('DJANGO_SUPERUSER_EMAIL', '')
-password = os.environ.get('DJANGO_SUPERUSER_PASSWORD', '')
-username = os.environ.get('DJANGO_SUPERUSER_USERNAME', 'admin')
-
-if email and password:
-    if not User.objects.filter(username=username).exists():
-        User.objects.create_superuser(username, email, password)
-        print(f"Superuser '{username}' cree")
-    else:
-        print(f"Superuser '{username}' existe deja")
+e=os.environ.get('DJANGO_SUPERUSER_EMAIL','')
+p=os.environ.get('DJANGO_SUPERUSER_PASSWORD','')
+u=os.environ.get('DJANGO_SUPERUSER_USERNAME','admin')
+if e and p and not User.objects.filter(username=u).exists():
+    User.objects.create_superuser(u,e,p)
+    print('Superuser cree: '+u)
 else:
-    print("Variables superuser non definies, skipped")
-PYEOF
-
-echo "==> Build termine OK"
+    print('Superuser skipped')
+"
+'@ | Set-Content -Encoding UTF8 build_files.sh
