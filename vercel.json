@@ -1,0 +1,5 @@
+@'
+{
+  "version": 2
+}
+'@ | Set-Content -Encoding UTF8 vercel.json
