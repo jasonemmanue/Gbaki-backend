@@ -45,17 +45,26 @@ def _resolve_role(user):
     return 'student'
 
 
+def _users_by_email(email):
+    """Tous les comptes portant cet email, superusers/staff d'abord."""
+    return list(
+        User.objects.filter(email__iexact=email)
+        .order_by('-is_superuser', '-is_staff', 'date_joined')
+    )
+
+
 def _authenticate_by_email(email, password):
     """
     Django authenticate() utilise username, pas email.
-    On cherche d'abord le User par email, puis on tente avec son username.
+    Plusieurs comptes peuvent partager le même email : on tente chaque username
+    jusqu'à ce que le mot de passe corresponde, puis on retombe sur l'email
+    utilisé directement comme username.
     """
-    try:
-        user_obj = User.objects.get(email__iexact=email)
-        username = user_obj.username
-    except User.DoesNotExist:
-        username = email
-    return authenticate(username=username, password=password)
+    for user_obj in _users_by_email(email):
+        user = authenticate(username=user_obj.username, password=password)
+        if user:
+            return user
+    return authenticate(username=email, password=password)
 
 
 # ── Auth classique ───────────────────────────────────────────────────────────
@@ -72,7 +81,7 @@ def register(request):
         return Response({'error': 'Email et mot de passe requis.'}, status=status.HTTP_400_BAD_REQUEST)
     if len(password) < 6:
         return Response({'error': 'Le mot de passe doit contenir au moins 6 caractères.'}, status=status.HTTP_400_BAD_REQUEST)
-    if User.objects.filter(username=email).exists():
+    if User.objects.filter(username__iexact=email).exists() or User.objects.filter(email__iexact=email).exists():
         return Response({'error': 'Un compte avec cet email existe déjà.'}, status=status.HTTP_400_BAD_REQUEST)
 
     parts = full_name.split(' ', 1) if full_name else ['', '']
@@ -108,10 +117,11 @@ def login_view(request):
     role         = _resolve_role(user)
     display_name = f"{user.first_name} {user.last_name}".strip() or user.email or email
 
-    profile, _ = Profile.objects.get_or_create(
-        email=email,
-        defaults={'full_name': display_name, 'role': role, 'is_active': True}
-    )
+    profile = Profile.objects.select_related('class_id').filter(email__iexact=email).first()
+    if profile is None:
+        profile = Profile.objects.create(
+            email=email, full_name=display_name, role=role, is_active=True
+        )
 
     needs_save = False
     if (user.is_superuser or user.is_staff) and profile.role != 'admin':
@@ -144,20 +154,21 @@ def logout_view(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def me(request):
-    email = request.user.email
+    email = (request.user.email or request.user.username).strip().lower()
     role  = _resolve_role(request.user)
-    try:
-        profile = Profile.objects.select_related('class_id').get(email=email)
-        if (request.user.is_superuser or request.user.is_staff) and profile.role != 'admin':
-            profile.role = 'admin'
-            profile.save(update_fields=['role'])
-    except Profile.DoesNotExist:
+
+    profile = Profile.objects.select_related('class_id').filter(email__iexact=email).first()
+    if profile is None:
         profile = Profile.objects.create(
             email=email,
             full_name=request.user.get_full_name() or email,
             role=role,
             is_active=True,
         )
+    elif (request.user.is_superuser or request.user.is_staff) and profile.role != 'admin':
+        profile.role = 'admin'
+        profile.save(update_fields=['role'])
+
     return Response(_profile_data(profile))
 
 
@@ -177,11 +188,11 @@ def forgot_password(request):
     if not email:
         return Response({'error': 'Email requis.'}, status=400)
 
-    try:
-        user = User.objects.get(email__iexact=email)
-    except User.DoesNotExist:
+    users = _users_by_email(email)
+    if not users:
         # Réponse générique pour ne pas révéler les comptes existants
         return Response({'message': 'Si cet email est enregistré, un code vous a été envoyé.'})
+    user = users[0]
 
     # Supprimer tous les anciens OTP pour cet email (nettoyage)
     OTPCode.objects.filter(email=email).delete()
@@ -289,14 +300,14 @@ def reset_password(request):
         entry.delete()
         return Response({'error': 'Session expirée. Recommencez la procédure.'}, status=400)
 
-    # Mettre à jour le mot de passe
-    try:
-        user = User.objects.get(email__iexact=email)
+    # Mettre à jour le mot de passe (sur tous les comptes portant cet email)
+    users = _users_by_email(email)
+    if not users:
+        return Response({'error': 'Utilisateur introuvable.'}, status=404)
+    for user in users:
         user.set_password(new_password)
         user.save()
         Token.objects.filter(user=user).delete()   # invalider les sessions actives
-    except User.DoesNotExist:
-        return Response({'error': 'Utilisateur introuvable.'}, status=404)
 
     # Supprimer l'OTP utilisé
     entry.delete()
