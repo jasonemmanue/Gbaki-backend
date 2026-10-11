@@ -38,7 +38,8 @@ Ajouter un administrateur (le mot de passe ne passe que par les variables Railwa
 
 ```bash
 railway variable set GBAKI_ADMIN_EMAIL=prenom.nom@exemple.com --service Gbaki-backend --skip-deploys
-railway variable set GBAKI_ADMIN_PASSWORD --stdin --service Gbaki-backend   # saisir le mot de passe, redéploie
+# PowerShell : le mot de passe est demandé puis transmis par le tube (--stdin lit un tube, pas le clavier)
+Read-Host "Mot de passe admin" | railway variable set GBAKI_ADMIN_PASSWORD --stdin --service Gbaki-backend   # redéploie
 railway logs --service Gbaki-backend | grep create_admin                     # « Admin prêt : … »
 railway variable delete GBAKI_ADMIN_PASSWORD --service Gbaki-backend
 railway variable delete GBAKI_ADMIN_EMAIL --service Gbaki-backend
