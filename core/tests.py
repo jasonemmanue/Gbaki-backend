@@ -307,3 +307,36 @@ class GmailApiTests(TestCase):
             r = APIClient().post('/api/auth/forgot-password/', {'email': 'eleve@ensea.edu.ci'}, format='json')
         self.assertEqual(r.status_code, 503)
         self.assertFalse(OTPCode.objects.filter(email='eleve@ensea.edu.ci').exists())
+
+
+class DeleteAndReRegisterTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.admin = User.objects.create_user(username='admin', email='admin@gmail.com', password='x' * 8, is_staff=True)
+
+    def test_admin_delete_frees_the_email(self):
+        r = self.client.post('/api/auth/register/', {'email': 'junior@ensea.edu.ci', 'password': 'secret123'}, format='json')
+        self.assertEqual(r.status_code, 201)
+        profile = Profile.objects.get(email='junior@ensea.edu.ci')
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.client.delete(f'/api/profiles/{profile.id}/').status_code, 204)
+        self.assertFalse(User.objects.filter(email__iexact='junior@ensea.edu.ci').exists())
+        self.client.force_authenticate(None)
+        r = self.client.post('/api/auth/register/', {'email': 'junior@ensea.edu.ci', 'password': 'autre1234'}, format='json')
+        self.assertEqual(r.status_code, 201)
+
+    def test_orphan_account_from_old_deletion_is_released(self):
+        User.objects.create_user(username='junior@ensea.edu.ci', email='junior@ensea.edu.ci', password='ancien123')
+        r = self.client.post('/api/auth/register/', {'email': 'junior@ensea.edu.ci', 'password': 'nouveau123'}, format='json')
+        self.assertEqual(r.status_code, 201)
+        self.assertEqual(User.objects.filter(email__iexact='junior@ensea.edu.ci').count(), 1)
+
+    def test_existing_account_with_profile_still_blocks_register(self):
+        self.client.post('/api/auth/register/', {'email': 'junior@ensea.edu.ci', 'password': 'secret123'}, format='json')
+        r = self.client.post('/api/auth/register/', {'email': 'junior@ensea.edu.ci', 'password': 'autre1234'}, format='json')
+        self.assertEqual(r.status_code, 400)
+
+    def test_admin_cannot_delete_own_profile(self):
+        own = Profile.objects.create(email='admin@gmail.com', role='admin')
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.client.delete(f'/api/profiles/{own.id}/').status_code, 400)

@@ -2,6 +2,7 @@
 # core/auth_views.py  —  OTP stocké en base (compatible serverless)
 # ================================================================
 from django.contrib.auth.models import User
+from django.db.models import Q
 from django.contrib.auth import authenticate
 from django.conf import settings as django_settings
 from django.utils import timezone
@@ -105,7 +106,13 @@ def register(request):
         return Response({'error': ENSEA_EMAIL_ERROR}, status=status.HTTP_400_BAD_REQUEST)
     if len(password) < 6:
         return Response({'error': 'Le mot de passe doit contenir au moins 6 caractères.'}, status=status.HTTP_400_BAD_REQUEST)
-    if User.objects.filter(username__iexact=email).exists() or User.objects.filter(email__iexact=email).exists():
+    existing = User.objects.filter(Q(username__iexact=email) | Q(email__iexact=email))
+    # Compte orphelin : profil supprimé depuis l'admin avant la correction de la suppression.
+    # Un étudiant sans profil n'a plus d'existence dans l'app : on libère l'adresse.
+    if existing.exists() and not Profile.objects.filter(email__iexact=email).exists() \
+            and not existing.filter(Q(is_staff=True) | Q(is_superuser=True)).exists():
+        existing.delete()
+    if existing.exists():
         return Response({'error': 'Un compte avec cet email existe déjà.'}, status=status.HTTP_400_BAD_REQUEST)
 
     parts = full_name.split(' ', 1) if full_name else ['', '']

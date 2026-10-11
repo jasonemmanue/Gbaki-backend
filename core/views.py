@@ -6,6 +6,7 @@ from difflib import get_close_matches
 
 from django.conf import settings
 from django.core.cache import cache
+from django.contrib.auth.models import User
 from django.db.models import Q
 from django.http import HttpResponseRedirect
 from django.utils import timezone
@@ -209,9 +210,15 @@ class ProfileViewSet(viewsets.ModelViewSet):
         return super().create(request, *args, **kwargs)
 
     def destroy(self, request, *args, **kwargs):
+        """Supprime le profil ET les comptes de connexion de cet email, pour libérer l'adresse."""
         if not is_admin_user(request.user):
             return Response({'error': 'Réservé aux administrateurs.'}, status=status.HTTP_403_FORBIDDEN)
-        return super().destroy(request, *args, **kwargs)
+        profile = self.get_object()
+        if profile.email.lower() == (request.user.email or '').lower():
+            return Response({'error': 'Impossible de supprimer ton propre compte.'}, status=status.HTTP_400_BAD_REQUEST)
+        User.objects.filter(Q(email__iexact=profile.email) | Q(username__iexact=profile.email)).delete()
+        profile.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class SubjectViewSet(viewsets.ModelViewSet):
