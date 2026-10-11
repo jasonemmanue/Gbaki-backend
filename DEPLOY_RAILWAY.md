@@ -1,114 +1,69 @@
-# Guide de déploiement — Gbaki Backend sur Railway
+# Déploiement Railway — Gbaki
 
-## Résumé des fichiers modifiés / créés
+Projet Railway **Baki AI API**, environnement `production`. Tout se pilote avec le CLI Railway
+(`railway whoami` pour vérifier la connexion, `railway login` sinon).
 
-| Fichier | Action | Raison |
+| Service | Contenu | Domaine |
 |---|---|---|
-| `gbaki_backend/settings.py` | ✏️ Modifié | Support PostgreSQL, WhiteNoise, sécurité prod |
-| `requirements.txt` | ✏️ Modifié | Ajout gunicorn, psycopg2, whitenoise, dj-database-url |
-| `Procfile` | ✅ Créé | Indique à Railway comment démarrer l'app |
-| `runtime.txt` | ✅ Créé | Fixe la version Python (3.12.3) |
-| `.gitignore` | ✏️ Mis à jour | Exclut .env, venv, db.sqlite3, staticfiles |
-| `.env.example` | ✏️ Mis à jour | Template des variables d'environnement |
-| `.env` | ❌ Supprimé du repo | Ne jamais committer les secrets |
+| `Gbaki-backend` | Ce dépôt (Django) | https://gbaki-backend-production-link.up.railway.app |
+| `Gbaki-user` | Front étudiant Gbaki-AI (`Gbaki-AI-interface`) | https://gbaki-user-production.up.railway.app |
+| `Gbaki-admin` | Front admin (`Gbaki-searcher-admin`) | https://gbaki-admin-production.up.railway.app |
+| `Postgres` | Base PostgreSQL 18 (volume) | interne |
 
----
-
-## ÉTAPE 1 — Préparer le dépôt GitHub
+## Backend
 
 ```bash
-# Dans le dossier du projet
-git init
-git add .
-git commit -m "feat: backend Gbaki prêt pour Railway"
-
-# Créer un repo sur github.com puis :
-git remote add origin https://github.com/TON_USERNAME/gbaki-backend.git
-git branch -M main
-git push -u origin main
+cd Gbaki_back-end
+railway service link Gbaki-backend
+railway up --service Gbaki-backend --ci      # build + déploiement, logs en direct
 ```
 
-**Vérifier avant de pousser :**
-- Le fichier `.env` n'apparaît PAS dans `git status`
-- Les dossiers `venv/`, `__pycache__/`, `db.sqlite3` sont ignorés
+Le service est aussi relié au dépôt GitHub `jasonemmanue/Gbaki-backend` (branche `main`).
 
----
+Au démarrage (`Procfile`) : `migrate`, `collectstatic`, tâches de fond (`scripts/background_tasks.sh`),
+puis gunicorn. Railpack ignore la ligne `release:` d'un Procfile : les migrations sont donc dans `web:`.
 
-## ÉTAPE 2 — Créer le projet sur Railway
+Python : `runtime.txt` contient `python-3.12` (une version figée comme `3.12.3` fait échouer le
+build : le builder refuse les versions sans attestation GitHub).
 
-1. Aller sur **[railway.app](https://railway.app)** → Se connecter avec GitHub
-2. Cliquer **"New Project"**
-3. Choisir **"Deploy from GitHub repo"**
-4. Sélectionner **gbaki-backend**
-5. Railway détecte automatiquement Python et lance le build
-
----
-
-## ÉTAPE 3 — Ajouter PostgreSQL
-
-Dans ton projet Railway :
-1. Cliquer **"+ New"** → **"Database"** → **"PostgreSQL"**
-2. Railway crée la base et injecte `DATABASE_URL` automatiquement dans l'environnement
-
----
-
-## ÉTAPE 4 — Configurer les variables d'environnement
-
-Dans Railway → ton service → onglet **"Variables"**, ajouter :
-
-```
-DJANGO_SECRET_KEY   = [génère une clé ici : python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"]
-DEBUG               = False
-ALLOWED_HOSTS       = ton-projet.up.railway.app
-
-CF_R2_ACCESS_KEY    = [valeur de ton .env]
-CF_R2_SECRET_KEY    = [valeur de ton .env]
-CF_R2_BUCKET_NAME   = gbaki-documents
-CF_R2_ENDPOINT_URL  = [valeur de ton .env]
-CF_R2_PRESIGN_EXPIRY = 3600
-
-EMAIL_HOST_USER     = [valeur de ton .env]
-EMAIL_HOST_PASSWORD = [valeur de ton .env]
-
-CORS_ALLOW_ALL      = True
-```
-
-> `DATABASE_URL` est déjà injectée automatiquement par le plugin PostgreSQL — ne pas la modifier.
-
----
-
-## ÉTAPE 5 — Déploiement
-
-Railway lance automatiquement à chaque `git push` :
-1. `pip install -r requirements.txt`
-2. `python manage.py migrate --noinput`  (via Procfile release)
-3. `python manage.py collectstatic --noinput`
-4. `gunicorn gbaki_backend.wsgi` sur le port Railway
-
-Ton API sera disponible à : `https://ton-projet.up.railway.app/api/`
-
----
-
-## Commandes utiles après déploiement
+Tâches ponctuelles (import du catalogue, indexation) : variables `GBAKI_*`, voir le `Readme.md`.
 
 ```bash
-# Créer un superuser admin (via Railway CLI ou shell Railway)
-python manage.py createsuperuser
-
-# Voir les logs en direct
-railway logs
-
-# Lancer en local pour tester
-python manage.py runserver
+railway variable set GBAKI_INDEX=1 --service Gbaki-backend --skip-deploys
+railway redeploy --service Gbaki-backend --yes
+railway logs --service Gbaki-backend
 ```
 
----
+## Fronts Next.js
 
-## Checklist finale avant mise en ligne
+Chaque front a un `Dockerfile` (build Next.js, `next start` sur `$PORT`) et un `.railwayignore`.
 
-- [ ] `.env` absent du dépôt GitHub
-- [ ] `DJANGO_SECRET_KEY` différente de la clé de dev
-- [ ] `DEBUG=False` sur Railway
-- [ ] PostgreSQL ajouté et `DATABASE_URL` visible dans les variables
-- [ ] Toutes les variables CF_R2 et EMAIL renseignées
-- [ ] Build Railway vert ✅
+```bash
+cd gbaki-searcher
+railway up --service Gbaki-user --ci
+
+cd "gbaki searcher Admin"
+railway up --service Gbaki-admin --ci
+```
+
+`NEXT_PUBLIC_API_URL` vaut `https://${{Gbaki-backend.RAILWAY_PUBLIC_DOMAIN}}/api` : elle suit
+le domaine du backend et est injectée au build (`ARG` du Dockerfile).
+
+**Next.js doit rester à jour** (14.2.35 aujourd'hui) : Railway refuse de construire une version de
+Next.js connue comme vulnérable. Le déploiement échoue alors juste après « scheduling build »,
+sans aucun log.
+
+## Vérifications après déploiement
+
+```bash
+railway service list                          # tous les services « Online »
+railway logs --service Gbaki-backend          # migrations, tâches, erreurs
+curl https://gbaki-backend-production-link.up.railway.app/api/documents/?page_size=1
+```
+
+## Checklist
+
+- [ ] `DEBUG=False`, `DJANGO_SECRET_KEY` propre à la prod
+- [ ] Variables `CF_R2_*` et `EMAIL_*` renseignées sur `Gbaki-backend`
+- [ ] Variables `GBAKI_*` retirées une fois les tâches terminées
+- [ ] Les 3 services « Online »

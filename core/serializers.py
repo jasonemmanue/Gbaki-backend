@@ -49,6 +49,7 @@ class DocumentSerializer(serializers.ModelSerializer):
     clickable_link= serializers.SerializerMethodField()
     previewable   = serializers.SerializerMethodField()
     badges        = serializers.SerializerMethodField()
+    has_thumbnail = serializers.SerializerMethodField()
 
     class Meta:
         model = Document
@@ -61,6 +62,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             'status', 'is_published',
             'created_at', 'updated_at',
             'previewable', 'badges',
+            'is_folder', 'page_count', 'has_thumbnail', 'indexed_at',
             # FK ids pour l'admin
             'class_id', 'subject_id', 'academic_year_id', 'document_type_id',
         ]
@@ -101,6 +103,11 @@ class DocumentSerializer(serializers.ModelSerializer):
             'application/pdf', 'image/png', 'image/jpeg',
             'image/webp', 'image/gif', 'text/plain',
         }
+
+    def get_has_thumbnail(self, obj):
+        # Vignette déjà générée, ou générable à la volée (PDF / image)
+        from .indexing import can_thumbnail
+        return bool(obj.thumbnail_key) or can_thumbnail(obj)
 
     def get_badges(self, obj):
         badges = []

@@ -4,7 +4,7 @@ from rest_framework.routers import DefaultRouter
 from core.views import (
     ClassViewSet, ProfileViewSet, SubjectViewSet,
     AcademicYearViewSet, DocumentTypeViewSet, DocumentViewSet, TeacherViewSet,
-    autocomplete_teachers, autocomplete_documents,
+    autocomplete_teachers, autocomplete_documents, fulltext_search, notifications_today,
 )
 from core.auth_views import register, login_view, logout_view, me, forgot_password, verify_otp, reset_password
 
@@ -28,5 +28,7 @@ urlpatterns = [
     path('api/auth/reset-password/',    reset_password,          name='auth-reset-password'),
     path('api/autocomplete/teachers/',  autocomplete_teachers,   name='autocomplete-teachers'),
     path('api/autocomplete/documents/', autocomplete_documents,  name='autocomplete-docs'),
+    path('api/search/fulltext/',        fulltext_search,         name='search-fulltext'),
+    path('api/notifications/today/',    notifications_today,     name='notifications-today'),
     path('api/',                        include(router.urls)),
 ]

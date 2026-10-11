@@ -13,6 +13,7 @@ from rest_framework import status
 from rest_framework.authtoken.models import Token
 from .models import Profile, OTPCode
 import random
+import re
 import string
 
 
@@ -37,6 +38,18 @@ def _profile_data(profile):
         'class_label':    profile.class_id.label   if profile.class_id else None,
         'is_first_login': profile.class_id is None,
     }
+
+
+ENSEA_EMAIL_RE = re.compile(r'^[a-z0-9][a-z0-9._-]*@ensea\.edu\.ci$')
+ENSEA_EMAIL_ERROR = "Seules les adresses institutionnelles au format nom@ensea.edu.ci sont acceptées."
+
+
+def _is_ensea_email(email: str) -> bool:
+    return bool(ENSEA_EMAIL_RE.match((email or '').strip().lower()))
+
+
+def _is_staff(user) -> bool:
+    return bool(user.is_superuser or user.is_staff)
 
 
 def _resolve_role(user):
@@ -79,6 +92,8 @@ def register(request):
 
     if not email or not password:
         return Response({'error': 'Email et mot de passe requis.'}, status=status.HTTP_400_BAD_REQUEST)
+    if not _is_ensea_email(email):
+        return Response({'error': ENSEA_EMAIL_ERROR}, status=status.HTTP_400_BAD_REQUEST)
     if len(password) < 6:
         return Response({'error': 'Le mot de passe doit contenir au moins 6 caractères.'}, status=status.HTTP_400_BAD_REQUEST)
     if User.objects.filter(username__iexact=email).exists() or User.objects.filter(email__iexact=email).exists():
@@ -113,6 +128,8 @@ def login_view(request):
         return Response({'error': 'Email ou mot de passe incorrect.'}, status=status.HTTP_401_UNAUTHORIZED)
     if not user.is_active:
         return Response({'error': 'Compte désactivé.'}, status=status.HTTP_403_FORBIDDEN)
+    if not _is_staff(user) and not _is_ensea_email(email):
+        return Response({'error': ENSEA_EMAIL_ERROR}, status=status.HTTP_403_FORBIDDEN)
 
     role         = _resolve_role(user)
     display_name = f"{user.first_name} {user.last_name}".strip() or user.email or email
@@ -156,6 +173,8 @@ def logout_view(request):
 def me(request):
     email = (request.user.email or request.user.username).strip().lower()
     role  = _resolve_role(request.user)
+    if not _is_staff(request.user) and not _is_ensea_email(email):
+        return Response({'error': ENSEA_EMAIL_ERROR}, status=status.HTTP_403_FORBIDDEN)
 
     profile = Profile.objects.select_related('class_id').filter(email__iexact=email).first()
     if profile is None:
@@ -189,6 +208,8 @@ def forgot_password(request):
         return Response({'error': 'Email requis.'}, status=400)
 
     users = _users_by_email(email)
+    if users and not _is_staff(users[0]) and not _is_ensea_email(email):
+        return Response({'error': ENSEA_EMAIL_ERROR}, status=400)
     if not users:
         # Réponse générique pour ne pas révéler les comptes existants
         return Response({'message': 'Si cet email est enregistré, un code vous a été envoyé.'})

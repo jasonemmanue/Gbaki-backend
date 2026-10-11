@@ -29,6 +29,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django.contrib.postgres',
     # Third-party
     'rest_framework',
     'rest_framework.authtoken',
@@ -77,7 +78,7 @@ if DATABASE_URL:
         'default': dj_database_url.parse(
             DATABASE_URL,
             conn_max_age=0,        # 0 = pas de connexion persistante (serverless)
-            ssl_require=True,
+            ssl_require=DATABASE_URL.startswith('postgres'),
         )
     }
 else:
@@ -96,6 +97,8 @@ CF_R2_BUCKET_NAME    = os.environ.get('CF_R2_BUCKET_NAME', 'gbaki-documents')
 CF_R2_ENDPOINT_URL   = os.environ.get('CF_R2_ENDPOINT_URL', '')
 CF_R2_PUBLIC_DOMAIN  = os.environ.get('CF_R2_PUBLIC_DOMAIN', '')
 CF_R2_PRESIGN_EXPIRY = int(os.environ.get('CF_R2_PRESIGN_EXPIRY', '3600'))
+# Préfixe des vignettes générées par index_documents
+CF_R2_THUMBS_PREFIX  = os.environ.get('CF_R2_THUMBS_PREFIX', '_thumbs')
 
 # ── DRF ──────────────────────────────────────────────────────────────────────
 REST_FRAMEWORK = {
@@ -152,5 +155,10 @@ LOGGING = {
     'root': {
         'handlers': ['console'],
         'level': 'DEBUG',
+    },
+    # boto/urllib3 en DEBUG journalisent chaque requête R2, signatures comprises
+    'loggers': {
+        name: {'level': 'WARNING'}
+        for name in ('botocore', 'boto3', 's3transfer', 'urllib3')
     },
 }

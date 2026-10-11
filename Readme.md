@@ -1,347 +1,195 @@
-# 📚 G-baki API — Backend Django
+# G-baki API — Backend Django
 
-> Moteur de gestion et de recherche intelligente de supports pédagogiques
+> Bibliothèque numérique de la filière AS de l'ENSEA : catalogue de supports pédagogiques,
+> recherche dans le texte des documents (page et ligne), aperçu de la première page.
+> Porté par l'ENSEA Data Science Club.
 
----
-
-## 🎯 Vue d'ensemble
-
-**G-baki** est une API REST construite avec Django & Django REST Framework. Elle constitue le backend d'un manuel numérique scolaire permettant :
-
-- Aux **enseignants** de déposer et organiser des supports pédagogiques (cours, TD, examens, corrigés…)
-- Aux **étudiants** de les retrouver rapidement via une **recherche avancée multi-critères**
-- Aux **administrateurs** de gérer les classes, matières, années académiques et types de documents
+API REST Django + Django REST Framework, base PostgreSQL, fichiers sur Cloudflare R2.
+Deux fronts Next.js la consomment : **Gbaki-AI** (étudiants, repo `Gbaki-AI-interface`)
+et **GBAKI Admin** (repo `Gbaki-searcher-admin`). Tout tourne sur Railway, projet « Baki AI API ».
 
 ---
 
-## 🏗️ Architecture générale
+## Modèle de données
 
-```
-gbaki_backend/
-├── core/                          # Application principale
-│   ├── models.py                  # Modèles de données
-│   ├── serializers.py             # Sérialiseurs DRF enrichis
-│   ├── views.py                   # ViewSets + logique de recherche
-│   ├── admin.py                   # Interface d'administration Django
-│   └── migrations/                # Historique des migrations
-│       ├── 0001_initial.py
-│       ├── 0002_remove_document_created_at_and_more.py
-│       ├── 0003_document_created_at_document_is_published_and_more.py
-│       └── 0004_remove_document_teacher_document_teachers.py
-├── manage.py
-├── pyproject.toml
-└── requirements.txt
-```
+| Modèle | Rôle |
+|---|---|
+| `Class` | Classe (AS1, AS2, AS3, ISE…) |
+| `Profile` | Profil applicatif d'un utilisateur Django (email, rôle, classe) |
+| `Subject` | Matière, rattachée à une classe. La description finit par le préfixe R2 de la matière |
+| `AcademicYear` | Année académique ; une seule `is_active` |
+| `DocumentType` | Type (Cours, TD, Corrigé, Sujet d'examen…), code = préfixe des fichiers dans R2 |
+| `Teacher` | Enseignant, lié aux documents en ManyToMany |
+| `Document` | Métadonnées d'un fichier R2 (`file_path` = clé objet). `is_folder` : dossier-projet (préfixe R2) |
+| `DocumentPage` | Texte extrait d'une page (recherche plein texte) |
+| `SearchTerm` | Vocabulaire indexé, pour corriger les fautes de frappe |
+| `OTPCode` | Codes de réinitialisation de mot de passe |
 
----
-
-## 🗄️ Modèle de données
-
-### Schéma relationnel
-
-```
-Class
-  ├── code (unique)         ex: "AS2", "L1-ECO"
-  ├── label                 ex: "Analyse Statistique 2"
-  ├── cycle                 ex: "Licence"
-  └── level_order           ex: 2
-
-Profile (utilisateur)
-  ├── email (unique)
-  ├── full_name
-  ├── role                  ex: "teacher", "student", "admin"
-  └── class_id → Class
-
-Subject (matière)
-  ├── code                  ex: "STAT3"
-  ├── name                  ex: "Statistiques 3"
-  └── class_id → Class
-
-AcademicYear (année académique)
-  ├── label                 ex: "2024-2025"
-  ├── start_year            ex: 2024
-  ├── end_year              ex: 2025
-  └── is_active             (une seule active à la fois)
-
-DocumentType (type de document)
-  ├── code                  ex: "COURS", "TD", "EXAM", "CORR"
-  └── label                 ex: "Cours", "Travaux Dirigés", "Examen", "Corrigé"
-
-Document (support pédagogique) ← cœur du système
-  ├── title
-  ├── description
-  ├── file_name
-  ├── file_path             URL directe vers le fichier (Cloudflare R2)
-  ├── bucket_name
-  ├── mime_type             ex: "application/pdf"
-  ├── file_size
-  ├── class_id → Class
-  ├── subject_id → Subject
-  ├── academic_year_id → AcademicYear
-  ├── document_type_id → DocumentType
-  ├── uploaded_by → Profile
-  ├── teachers ↔ Profile    (relation ManyToMany)
-  ├── status                ex: "draft", "published"
-  └── is_published          (booléen)
-```
-
-### Notes sur le stockage des fichiers
-
-Les fichiers physiques sont hébergés sur **Cloudflare R2** (stockage objet compatible S3). La base de données ne conserve que les **métadonnées** : chemin, bucket, type MIME, taille. Le champ `file_path` sert de lien cliquable direct vers le fichier.
+Champs d'indexation de `Document` : `page_count`, `thumbnail_key` (vignette PNG de la 1re page
+dans R2, sous `_thumbs/`), `indexed_at`.
 
 ---
 
-## 🔌 Endpoints de l'API
+## Endpoints
 
-Base URL : `/api/`
+Base : `/api/`. Authentification par token (`Authorization: Token <clé>`).
 
-| Ressource       | Endpoint               | Méthodes           |
-|----------------|------------------------|--------------------|
-| Classes         | `/api/classes/`        | GET, POST, PUT, DELETE |
-| Profils         | `/api/profiles/`       | GET, POST, PUT, DELETE |
-| Matières        | `/api/subjects/`       | GET, POST, PUT, DELETE |
-| Années acad.    | `/api/academic-years/` | GET, POST, PUT, DELETE |
-| Types de doc    | `/api/document-types/` | GET, POST, PUT, DELETE |
-| Documents       | `/api/documents/`      | GET, POST, PUT, DELETE |
+### Authentification
 
----
+| Endpoint | Description |
+|---|---|
+| `POST auth/register/` | Inscription. **Email au format `nom@ensea.edu.ci` obligatoire** |
+| `POST auth/login/` | Connexion. Un compte non admin dont l'email n'est pas `@ensea.edu.ci` est refusé (403) |
+| `GET auth/me/` | Profil courant (même règle d'email) |
+| `POST auth/logout/` | Déconnexion |
+| `POST auth/forgot-password/`, `auth/verify-otp/`, `auth/reset-password/` | Mot de passe oublié (OTP par email) |
 
-## 🔍 Recherche et filtres sur `/api/documents/`
+Les comptes `is_staff` / `is_superuser` (admins) ne sont pas soumis à la règle d'email.
 
-### Filtres directs (query params)
+### Catalogue
 
-| Paramètre          | Description                              | Exemple                        |
-|--------------------|------------------------------------------|--------------------------------|
-| `class_id`         | Filtrer par classe (UUID)                | `?class_id=abc-123`            |
-| `subject_id`       | Filtrer par matière (UUID)               | `?subject_id=xyz-456`          |
-| `academic_year_id` | Filtrer par année académique (UUID)      | `?academic_year_id=aaa-789`    |
-| `document_type_id` | Filtrer par type de document (UUID)      | `?document_type_id=bbb-321`    |
-| `teacher`          | Filtrer par enseignant (UUID)            | `?teacher=ccc-654`             |
-| `uploaded_by`      | Filtrer par uploadeur (UUID)             | `?uploaded_by=ddd-987`         |
-| `status`           | Filtrer par statut                       | `?status=draft`                |
-| `is_published`     | Filtrer par publication                  | `?is_published=true`           |
-| `search`           | Recherche textuelle intelligente         | `?search=proba conditionnelle` |
+| Endpoint | Description |
+|---|---|
+| `classes/`, `subjects/?class_id=`, `academic-years/`, `document-types/`, `teachers/` | Référentiels (CRUD) |
+| `profiles/` | Authentifié. Un étudiant ne voit et ne modifie que son profil ; un admin voit tout |
+| `documents/` | Liste **paginée** et CRUD |
+| `documents/{id}/download/?mode=preview\|download` | URL signée R2 (authentifié) |
+| `documents/{id}/thumbnail/` | Redirige vers la vignette de la 1re page (public, documents publiés) ; générée à la volée si absente |
+| `documents/{id}/files/` | Fichiers d'un dossier-projet, avec URLs signées (authentifié) |
+| `documents/{id}/page/?n=3&q=…` | Texte d'une page, ligne par ligne, avec plages à surligner (authentifié) |
+| `search/fulltext/?q=…&class_id=` | Recherche plein texte (authentifié), voir plus bas |
+| `notifications/today/` | Nombre de documents publiés aujourd'hui |
+| `autocomplete/documents/?q=`, `autocomplete/teachers/?q=` | Suggestions |
 
-### Fonctionnement de la recherche textuelle (`?search=`)
+### Liste des documents
 
-La recherche est multi-couches :
+`GET /api/documents/` accepte :
 
-#### 1. Normalisation unicode
-Suppression des accents pour une correspondance insensible : `probabilité` ≡ `probabilite`
+| Paramètre | Effet |
+|---|---|
+| `page`, `page_size` | Pagination (50 par défaut, 200 max) |
+| `class_id`, `class_code`, `subject_id`, `academic_year_id`, `document_type_id`, `teacher_id`, `uploaded_by`, `status`, `is_published` | Filtres |
+| `title` | Titre contenant le texte |
+| `search` | Recherche sur les métadonnées (accents ignorés, synonymes : proba, td, exam…) |
+| `ordering` | `title`, `-title`, `year` (défaut : plus récents d'abord) |
 
-#### 2. Expansion de synonymes
-| Terme saisi | Termes recherchés                                       |
-|-------------|--------------------------------------------------------|
-| `proba`     | probabilite, probabilité                               |
-| `math`      | mathematiques, mathématiques, mathematique             |
-| `stat`      | statistique, statistiques                              |
-| `td`        | travaux diriges, travaux dirigés                       |
-| `tp`        | travaux pratiques                                      |
-| `corrige`   | corrige, corrigé, correction                           |
-| `exam`      | examen, épreuve                                        |
-| `devoir`    | devoir, interro, interrogation                         |
+Réponse : `{count, page, page_size, num_pages, results[, suggestions]}`.
 
-#### 3. Champs de recherche couverts
-- Titre et description du document
-- Nom et email des enseignants liés
-- Nom et code de la matière
-- Label et code de la classe
-- Label du type de document
-- Label de l'année académique
+### Recherche plein texte
 
-#### 4. Suggestions orthographiques
-Si la recherche retourne **0 résultats**, l'API analyse le vocabulaire existant et propose des corrections via `difflib.get_close_matches`.
-
-**Exemple de réponse avec suggestion :**
-```json
-{
-  "count": 0,
-  "results": [],
-  "suggestions": ["probabilite", "statistique"]
-}
-```
-
-### Format de réponse standard `/api/documents/`
+`GET /api/search/fulltext/?q=intervalle de confiance` renvoie les passages trouvés dans le texte
+des documents publiés :
 
 ```json
 {
-  "count": 4,
+  "query": "intervalle de confiance",
+  "corrections": [{"from": "intervale", "to": "intervalle"}],
+  "count": 7, "exact_count": 4, "close_count": 3, "documents_count": 3,
+  "documents": {"<id>": {"title": "…", "subject": "…", "page_count": 48, "…": "…"}},
   "results": [
-    {
-      "id": "1482694624fe4eb182d09af27c544636",
-      "title": "Devoir Estimation AS2 2024-2025",
-      "description": "Examen 1 d'estimation 2025",
-      "file_name": "Devoir_Estimation_AS2_2024-2025",
-      "clickable_link": "https://...",
-      "mime_type": "application/pdf",
-      "file_size": null,
-      "class_info": { "code": "AS2", "label": "Analyse Statistique 2" },
-      "subject": "Estimation",
-      "document_type": "Devoir/TD",
-      "academic_year": "2024-2025",
-      "uploaded_by": "Jean Dupont",
-      "teachers": [
-        { "name": "Jean Dupont", "email": "jean@school.ci" }
-      ],
-      "status": "draft",
-      "is_published": false,
-      "created_at": "2026-04-13T15:24:37Z",
-      "updated_at": "2026-04-13T15:24:37Z",
-      "previewable": true,
-      "badges": ["PDF", "AS2", "Devoir/TD", "Estimation", "Brouillon", "Draft"]
-    }
+    {"document_id": "<id>", "page": 31, "line": 3, "kind": "exact",
+     "text": "Un intervalle de confiance de niveau 1 − α…", "spans": [[3, 26]], "found": null}
   ]
 }
 ```
 
-### Champs calculés du sérialiseur
+- **exacte** : la requête complète apparaît telle quelle dans la ligne (casse et accents ignorés) ;
+- **proche** : au moins la moitié des mots (ou leur racine, ou leur correction) apparaissent.
 
-| Champ           | Description                                                        |
-|-----------------|--------------------------------------------------------------------|
-| `clickable_link` | Lien direct vers le fichier (= `file_path`)                       |
-| `previewable`    | `true` si PDF, PNG, JPEG, WEBP ou TXT                             |
-| `badges`         | Liste de tags résumant le document (type MIME, classe, statut…)   |
-| `class_info`     | Objet `{ code, label }` de la classe                              |
-| `teachers`       | Liste `[{ name, email }]` des enseignants                         |
+PostgreSQL : index GIN sur `to_tsvector('french', gbaki_unaccent(content))` et index trigramme
+sur le vocabulaire (migration `0009`). Le code SQL est isolé dans `core/search.py`.
 
 ---
 
-## ⚙️ Installation & lancement
+## Catalogue : import et indexation
 
-### Prérequis
-- Python 3.14+
-- SQLite (dev) ou PostgreSQL (prod)
-
-### Installation
+Les CSV du catalogue sont versionnés dans `data/catalogue/` (années, types, matières, documents).
 
 ```bash
-# Cloner le projet
-git clone <repo-url>
-cd gbaki_backend
+# Vide documents, matières, années et types (classes, enseignants, profils conservés),
+# puis réimporte depuis les CSV. Tailles de fichiers lues dans R2, clés absentes signalées.
+python manage.py import_catalogue --confirm
+#   --if-needed   ne fait rien si la base contient déjà exactement les documents du CSV
+#   --backup-r2   sauvegarde l'ancien catalogue (dumpdata) dans R2 sous _backups/
+#   --skip-r2     ne lit pas le bucket
 
-# Installer les dépendances (avec uv recommandé)
-uv sync
-# ou avec pip
-pip install -r requirements.txt
-
-# Appliquer les migrations
-python manage.py migrate
-
-# Créer un superutilisateur
-python manage.py createsuperuser
-
-# Lancer le serveur
-python manage.py runserver
+# Extrait le texte page par page (PyMuPDF) et crée les vignettes. Reprenable.
+python manage.py index_documents                  # documents jamais indexés
+python manage.py index_documents --class AS1 --limit 50 --workers 6
+python manage.py index_documents --retry-empty    # relance les PDF / textes restés sans texte
+python manage.py index_documents --force          # tout réindexer
 ```
 
-### Variables d'environnement recommandées
+Règles d'import :
+- documents sans type → `DOCUMENT` ;
+- année hors de la liste des années (lecture erronée du nom de fichier) → année par défaut `2025-2026`,
+  listée dans le rapport ;
+- lignes `_projet=oui` → `is_folder=True` (la taille est la somme du dossier).
+
+Indexation :
+- PDF : texte de chaque page + vignette de la page 1 ;
+- images : vignette ;
+- txt, py, html, csv, tex… : texte (une page) ;
+- docx, pptx, xlsx, zip… : pas de texte ni d'aperçu ;
+- PDF scannés : vignette mais pas de texte (pas d'OCR) ;
+- fichiers de plus de 80 Mo ignorés.
+
+### Sur Railway
+
+Le conteneur lance `scripts/background_tasks.sh` en arrière-plan au démarrage, piloté par des
+variables du service `Gbaki-backend` :
+
+| Variable | Tâche |
+|---|---|
+| `GBAKI_IMPORT_CATALOGUE=1` | `import_catalogue --confirm --if-needed --backup-r2` |
+| `GBAKI_INDEX=1` | `index_documents` (reprend où il s'était arrêté) |
+| `GBAKI_INDEX_RETRY=1` | `index_documents --retry-empty` |
+| `GBAKI_INDEX_WORKERS` | Nombre de threads (4 par défaut) |
+
+Retirer les variables une fois les tâches terminées. Suivi : `railway logs --service Gbaki-backend`.
+
+---
+
+## Installation locale
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate          # Windows
+pip install -r requirements.txt
+python manage.py migrate
+python manage.py create_admin --email admin@exemple.com --password '…'
+python manage.py runserver 8000
+python manage.py test core       # 18 tests (la correction orthographique n'est testée que sous PostgreSQL)
+```
+
+Sans `DATABASE_URL`, la base est SQLite ; la recherche plein texte passe alors par un repli
+simplifié (sans correction des fautes).
+
+### Variables d'environnement
 
 ```env
-SECRET_KEY=your-django-secret-key
-DEBUG=True
-DATABASE_URL=sqlite:///db.sqlite3
-# Pour la prod :
-# DATABASE_URL=postgresql://user:pass@localhost/gbaki
-CLOUDFLARE_R2_BUCKET=gbaki--ia
-CLOUDFLARE_R2_ENDPOINT=https://...
+DJANGO_SECRET_KEY=…
+DEBUG=False
+ALLOWED_HOSTS=*
+DATABASE_URL=postgresql://…            # injectée par Railway
+CF_R2_ACCESS_KEY=…
+CF_R2_SECRET_KEY=…
+CF_R2_BUCKET_NAME=gbaki-documents
+CF_R2_ENDPOINT_URL=https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+CF_R2_PRESIGN_EXPIRY=3600
+CF_R2_THUMBS_PREFIX=_thumbs            # préfixe des vignettes
+EMAIL_HOST_USER=…
+EMAIL_HOST_PASSWORD=…
+CORS_ALLOW_ALL=True
 ```
 
----
-
-## 🛠️ Stack technique
-
-| Composant             | Technologie                          |
-|-----------------------|--------------------------------------|
-| Framework             | Django 6.0.3                         |
-| API REST              | Django REST Framework 3.15+          |
-| Base de données (dev) | SQLite 3                             |
-| Base de données (prod)| PostgreSQL (via psycopg2-binary)     |
-| Stockage de fichiers  | Cloudflare R2 (compatible S3)        |
-| CORS                  | django-cors-headers                  |
-| Filtrage              | django-filter                        |
-| Gestion dépendances   | uv / pip                             |
+Déploiement : voir `DEPLOY_RAILWAY.md`.
 
 ---
 
-## 📊 État du projet
+## Stack
 
-### ✅ Implémenté
-- Modèles complets avec UUIDs
-- CRUD complet sur toutes les ressources
-- Recherche textuelle multi-champs avec normalisation unicode
-- Expansion de synonymes en français
-- Suggestions orthographiques
-- Filtres combinables
-- Sérialiseur enrichi (badges, previewable, clickable_link)
-- Interface d'administration Django
-- Support ManyToMany enseignants par document
+Django 6, Django REST Framework, PostgreSQL 18 (Railway), PyMuPDF, boto3 (Cloudflare R2),
+WhiteNoise, gunicorn.
 
-### 🔜 À implémenter
-- Authentification (JWT / Supabase Auth)
-- Permissions par rôle (admin / enseignant / étudiant)
-- Pagination côté API
-- Upload de fichiers vers Cloudflare R2 via l'API
-- Endpoint dashboard (stats par classe, par matière, activité récente)
-- Tests unitaires et d'intégration
-- Documentation Swagger / OpenAPI
-
----
-
-## 🗂️ Historique des migrations
-
-| Migration | Description                                                           |
-|-----------|-----------------------------------------------------------------------|
-| `0001`    | Structure initiale : Class, Profile, Subject, AcademicYear, DocumentType, Document |
-| `0002`    | Refactoring temporaire : suppression de `created_at`, `status`, `is_published` |
-| `0003`    | Réintroduction des champs + ajout d'un `teacher` FK                   |
-| `0004`    | Remplacement du FK `teacher` par une relation **ManyToMany** `teachers` |
-
----
-
-## 👥 Rôles utilisateurs (Profile.role)
-
-| Rôle      | Description                                                     |
-|-----------|-----------------------------------------------------------------|
-| `admin`   | Gestion complète (classes, matières, documents, utilisateurs)   |
-| `teacher` | Upload et gestion de ses propres documents                      |
-| `student` | Consultation et recherche de documents publiés                  |
-
----
-
-*G-baki — Manuel numérique de gestion des supports pédagogiques*
-
-
-cd gbaki_backend
-cd C:\Users\hp\StudioProjects\Gbaki_back-end
-.\.venv\Scripts\Activate.ps1
-pip install django djangorestframework django-cors-headers //Mieux
-pip install djangorestframework djangorestframework-authtoken django-cors-headers
-ou  python manage.py makemigrations
-    python manage.py migrate
-
-python manage.py migrate
-python manage.py runserver 8000
-
-
-# ── COMMANDES APRÈS MODIFICATION ─────────────────────────────────
-# .venv\Scripts\python.exe manage.py migrate
-# .venv\Scripts\python.exe manage.py createsuperuser
-# .venv\Scripts\python.exe manage.py runserver 8000
-
-
-#SUPERUSERDJANGO DE MA PART
-
-#NOM:emmanuel , Email:emmanuelsakam@gmail.com ,password:123456789
-#NOM:emmanu , Email:emmanusakam@ensea.edu.ci ,password:123456789
-
-
-
-comptes claudes travailleurs:
-emmanusakam@gmail.com et emmanudev2@gmail.com
-
-
-cd gbaki_backend
-pip install -r requirements.txt
-python manage.py migrate
-python manage.py createsuperuser   # crée ton admin
-python manage.py runserver 8000
+*G-baki — ENSEA Data Science Club*

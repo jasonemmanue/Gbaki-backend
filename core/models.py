@@ -115,8 +115,39 @@ class Document(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # Dossier-projet : file_path est un préfixe R2 (se termine par "/"), pas un fichier
+    is_folder = models.BooleanField(default=False)
+    # Rempli par la commande index_documents
+    page_count = models.IntegerField(null=True, blank=True)
+    thumbnail_key = models.CharField(max_length=500, null=True, blank=True)
+    indexed_at = models.DateTimeField(null=True, blank=True)
+
     def __str__(self):
         return self.title
+
+
+class DocumentPage(models.Model):
+    """Texte extrait d'une page de document, pour la recherche plein texte."""
+    document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name='pages')
+    page_number = models.IntegerField()
+    content = models.TextField()
+
+    class Meta:
+        ordering = ['document', 'page_number']
+        constraints = [
+            models.UniqueConstraint(fields=['document', 'page_number'], name='uniq_document_page'),
+        ]
+
+    def __str__(self):
+        return f"{self.document_id} p.{self.page_number}"
+
+
+class SearchTerm(models.Model):
+    """Vocabulaire des documents indexés (mots sans accents), pour corriger les fautes de frappe."""
+    word = models.CharField(max_length=100, unique=True)
+
+    def __str__(self):
+        return self.word
 
 
 class OTPCode(models.Model):

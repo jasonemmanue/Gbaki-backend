@@ -1,0 +1,14 @@
+﻿Libelle,Code,Description
+Cours,COURS,"Support de cours magistral : polycopié, chapitre, diaporama du professeur. Préfixe de fichier : cours- (1 201 fichiers)."
+Ressource,RESSOURCE,"Document annexe qui complète le cours sans en faire partie : article, ouvrage, support externe, tutoriel. Préfixe de fichier : ressource- (975 fichiers)."
+Exercices,EXERCICES,"Feuille d'exercices d'entraînement, sans note. À distinguer du TD (séance encadrée) et du devoir (évalué). Préfixe de fichier : exercices- (635 fichiers)."
+Projet,PROJET,Travail long rendu en groupe ou individuellement. Un dossier de projet entier compte pour UN seul document. Préfixe de fichier : projet- (592 fichiers).
+Devoir,DEVOIR,"Travail noté : devoir surveillé, devoir de maison, interrogation. Préfixe de fichier : devoir- (529 fichiers)."
+Document,DOCUMENT,"Fourre-tout pour ce qui n'entre dans aucun autre type : programme officiel, note administrative, emploi du temps. Préfixe de fichier : document- (517 fichiers)."
+Exposé,EXPOSE,"Présentation préparée par des étudiants, en groupe le plus souvent. Préfixe de fichier : expose- (387 fichiers)."
+Corrigé,CORRIGE,"Correction d'un devoir, d'un TD, d'un sujet d'examen ou d'exercices. Préfixe de fichier : corrige- (269 fichiers)."
+TD,TD,Travaux dirigés : énoncé de la séance encadrée par un enseignant. Préfixe de fichier : td- (197 fichiers).
+TP,TP,"Travaux pratiques : séance sur machine, avec ou sans jeu de données joint. Préfixe de fichier : tp- (110 fichiers)."
+Données,DONNEES,"Jeu de données brut servant de support à un TP, un projet ou un cours : csv, xlsx, sav, dta. Préfixe de fichier : donnees- (88 fichiers)."
+Sujet d'examen,SUJET,"Sujet d'examen ou de concours, annales comprises. Sa correction va dans le type Corrigé. Préfixe de fichier : sujet- (64 fichiers)."
+Mémoire,MEMOIRE,"Mémoire de fin d'études ou rapport de stage. ATTENTION : les mémoires nominatifs sont des données personnelles, ne jamais les rendre publics. Préfixe de fichier : memoire- (47 fichiers)."
