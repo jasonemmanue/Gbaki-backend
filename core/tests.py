@@ -13,7 +13,7 @@ from django.test import TestCase, override_settings
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
 
-from .models import AcademicYear, Class, Document, DocumentPage, DocumentType, Profile, SearchTerm, Subject, Teacher
+from .models import AcademicYear, Class, Document, DocumentPage, DocumentType, OTPCode, Profile, SearchTerm, Subject, Teacher
 from .search import analyse_line, parse_query, search_fulltext
 
 CATALOGUE = Path(settings.BASE_DIR) / 'data' / 'catalogue'
@@ -260,7 +260,50 @@ class ForgotPasswordMailFailureTests(TestCase):
     def test_smtp_failure_returns_clear_message(self):
         from unittest import mock
         User.objects.create_user(username='eleve@ensea.edu.ci', email='eleve@ensea.edu.ci', password='x' * 8)
-        with mock.patch('core.auth_views.send_mail', side_effect=TimeoutError('timed out')):
+        with mock.patch('core.auth_views.send_email', side_effect=TimeoutError('timed out')):
             r = APIClient().post('/api/auth/forgot-password/', {'email': 'eleve@ensea.edu.ci'}, format='json')
         self.assertEqual(r.status_code, 503)
         self.assertIn('administrateur', r.json()['error'])
+
+
+@override_settings(GMAIL_API_CLIENT_ID='cid', GMAIL_API_CLIENT_SECRET='secret',
+                   GMAIL_API_REFRESH_TOKEN='refresh', GMAIL_API_SENDER='gbaki@gmail.com',
+                   EMAIL_HOST_USER='', EMAIL_HOST_PASSWORD='')
+class GmailApiTests(TestCase):
+    def setUp(self):
+        from . import emailing
+        emailing._token.update(value=None, expires_at=0.0)
+        self.emailing = emailing
+
+    def test_forgot_password_sends_through_gmail_api(self):
+        import base64, json
+        from email import message_from_bytes
+        from unittest import mock
+        calls = []
+
+        def fake_post(url, data, headers, timeout):
+            calls.append((url, data, headers))
+            if url == self.emailing.TOKEN_URL:
+                return 200, json.dumps({'access_token': 'tok', 'expires_in': 3600})
+            return 200, '{"id": "1"}'
+
+        User.objects.create_user(username='eleve@ensea.edu.ci', email='eleve@ensea.edu.ci', password='x' * 8)
+        with mock.patch.object(self.emailing, '_post', side_effect=fake_post):
+            r = APIClient().post('/api/auth/forgot-password/', {'email': 'eleve@ensea.edu.ci'}, format='json')
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual([c[0] for c in calls], [self.emailing.TOKEN_URL, self.emailing.SEND_URL])
+        self.assertEqual(calls[1][2]['Authorization'], 'Bearer tok')
+        raw = json.loads(calls[1][1])['raw']
+        msg = message_from_bytes(base64.urlsafe_b64decode(raw))
+        self.assertEqual(msg['To'], 'eleve@ensea.edu.ci')
+        code = OTPCode.objects.get(email='eleve@ensea.edu.ci').code
+        body = msg.get_payload()[0].get_payload(decode=True).decode()
+        self.assertIn(code, body)
+
+    def test_gmail_failure_without_smtp_returns_503_and_drops_code(self):
+        from unittest import mock
+        User.objects.create_user(username='eleve@ensea.edu.ci', email='eleve@ensea.edu.ci', password='x' * 8)
+        with mock.patch.object(self.emailing, '_post', return_value=(400, '{"error": "invalid_grant"}')):
+            r = APIClient().post('/api/auth/forgot-password/', {'email': 'eleve@ensea.edu.ci'}, format='json')
+        self.assertEqual(r.status_code, 503)
+        self.assertFalse(OTPCode.objects.filter(email='eleve@ensea.edu.ci').exists())

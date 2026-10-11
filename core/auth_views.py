@@ -3,14 +3,15 @@
 # ================================================================
 from django.contrib.auth.models import User
 from django.contrib.auth import authenticate
-from django.core.mail import send_mail
 from django.conf import settings as django_settings
 from django.utils import timezone
+from django.utils.html import escape
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.authtoken.models import Token
+from .emailing import send_email
 from .models import Profile, OTPCode
 import logging
 import random
@@ -231,31 +232,29 @@ def forgot_password(request):
     expires_at = timezone.now() + timezone.timedelta(minutes=10)
     OTPCode.objects.create(email=email, code=otp, expires_at=expires_at)
 
-    # Envoyer l'email
-    email_user = django_settings.EMAIL_HOST_USER
-    email_pass = django_settings.EMAIL_HOST_PASSWORD
-
-    if not email_user or not email_pass:
-        return Response(
-            {'error': f'Configuration email manquante. EMAIL_HOST_USER non défini.'},
-            status=500
-        )
-
+    # Envoyer l'email (API Gmail en priorité, SMTP sinon : voir core/emailing.py)
+    name = user.first_name or email.split('@')[0]
+    text = (
+        f"Bonjour {name},\n\n"
+        f"Votre code de réinitialisation de mot de passe Gbaki-AI est :\n\n"
+        f"    {otp}\n\n"
+        f"Ce code est valable 10 minutes.\n"
+        f"Si vous n'avez pas demandé de réinitialisation, ignorez cet email.\n\n"
+        f"L'équipe Gbaki-AI, ENSEA Data Science Club"
+    )
+    html = (
+        '<div style="font-family:Arial,sans-serif;max-width:460px;margin:auto;color:#1b2430">'
+        '<h2 style="margin:0 0 12px">Gbaki-AI</h2>'
+        f'<p>Bonjour {escape(name)},</p>'
+        '<p>Votre code de réinitialisation de mot de passe est :</p>'
+        f'<p style="font-size:30px;font-weight:bold;letter-spacing:8px;margin:18px 0">{otp}</p>'
+        '<p>Ce code est valable <strong>10 minutes</strong>.</p>'
+        '<p style="color:#6b7480;font-size:13px">Si vous n\'avez pas demandé de réinitialisation, '
+        'ignorez cet email.</p>'
+        '<p style="color:#6b7480;font-size:13px">L\'équipe Gbaki-AI, ENSEA Data Science Club</p></div>'
+    )
     try:
-        send_mail(
-            subject='GBAKI : votre code de réinitialisation',
-            message=(
-                f"Bonjour {user.first_name or user.email},\n\n"
-                f"Votre code de réinitialisation de mot de passe est :\n\n"
-                f"    {otp}\n\n"
-                f"Ce code est valable 10 minutes.\n"
-                f"Si vous n'avez pas demandé de réinitialisation, ignorez cet email.\n\n"
-                f"L'équipe GBAKI, ENSEA Data Science Club"
-            ),
-            from_email=email_user,
-            recipient_list=[email],
-            fail_silently=False,
-        )
+        send_email(email, 'Gbaki-AI : votre code de réinitialisation', text, html)
     except Exception as e:
         logger.warning("Envoi de l'OTP à %s impossible : %s", email, e)
         OTPCode.objects.filter(email=email).delete()

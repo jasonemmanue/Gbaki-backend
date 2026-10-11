@@ -45,7 +45,31 @@ railway variable delete GBAKI_ADMIN_PASSWORD --service Gbaki-backend
 railway variable delete GBAKI_ADMIN_EMAIL --service Gbaki-backend
 ```
 
-SMTP : bloqué en sortie sur l'offre Hobby de Railway (l'email « mot de passe oublié » ne part pas).
+## Emails : API Gmail
+
+Railway bloque le SMTP sortant : les codes « mot de passe oublié » partent par l'API HTTP Gmail.
+
+1. Google Cloud Console (projet existant ou nouveau) → APIs & Services → Library → activer **Gmail API**.
+2. OAuth consent screen : type External, renseigner le nom de l'appli, ajouter le compte Gmail
+   expéditeur en utilisateur test, puis **Publish app** (en mode « Testing », le refresh_token
+   expire au bout de 7 jours).
+3. Credentials → Create credentials → OAuth client ID → **Web application**, avec l'URI de
+   redirection `https://developers.google.com/oauthplayground`. Noter Client ID et Client secret.
+4. https://developers.google.com/oauthplayground → roue crantée → « Use your own OAuth credentials »
+   (coller Client ID et secret) → scope `https://www.googleapis.com/auth/gmail.send` → Authorize APIs
+   (se connecter avec le compte expéditeur) → Exchange authorization code for tokens → copier le
+   **refresh_token**.
+5. Poser les variables (PowerShell, depuis `Gbaki_back-end`) :
+
+```powershell
+railway variable set GMAIL_API_SENDER=adresse.expediteur@gmail.com --service Gbaki-backend --skip-deploys
+railway variable set GMAIL_API_CLIENT_ID=xxxx.apps.googleusercontent.com --service Gbaki-backend --skip-deploys
+Read-Host "Client secret" | railway variable set GMAIL_API_CLIENT_SECRET --stdin --service Gbaki-backend --skip-deploys
+Read-Host "Refresh token" | railway variable set GMAIL_API_REFRESH_TOKEN --stdin --service Gbaki-backend
+```
+
+La dernière commande redéploie. Test : « Mot de passe oublié » sur le front étudiant, puis
+`railway logs --service Gbaki-backend` doit afficher « Email envoyé via l'API Gmail ».
 
 ## Fronts Next.js
 

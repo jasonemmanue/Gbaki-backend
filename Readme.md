@@ -161,7 +161,7 @@ pip install -r requirements.txt
 python manage.py migrate
 python manage.py create_admin --email admin@exemple.com --password '…'
 python manage.py runserver 8000
-python manage.py test core       # 21 tests (la correction orthographique n'est testée que sous PostgreSQL)
+python manage.py test core       # 23 tests (la correction orthographique n'est testée que sous PostgreSQL)
 ```
 
 Sans `DATABASE_URL`, la base est SQLite ; la recherche plein texte passe alors par un repli
@@ -186,10 +186,12 @@ CORS_ALLOW_ALL=True
 EMAIL_TIMEOUT=10                       # secondes avant d'abandonner l'envoi SMTP
 ```
 
-**Emails** : Railway bloque le SMTP sortant sur l'offre Hobby. Le code de « mot de passe oublié »
-ne part donc pas tant que le projet n'est pas en offre Pro ou relié à un service d'envoi par API
-(Brevo, Resend…). En attendant, un admin réinitialise le mot de passe depuis le front admin
-(page Utilisateurs).
+**Emails** (`core/emailing.py`, même principe que Prepaxia) : l'**API HTTP Gmail** (OAuth2) est
+utilisée en priorité, car Railway bloque le SMTP sortant ; le SMTP Gmail (`EMAIL_HOST_*`) sert de
+repli en local. Variables : `GMAIL_API_CLIENT_ID`, `GMAIL_API_CLIENT_SECRET`,
+`GMAIL_API_REFRESH_TOKEN`, `GMAIL_API_SENDER` (obtention : `DEPLOY_RAILWAY.md`). Si aucune voie
+ne fonctionne, « mot de passe oublié » répond 503 avec un message invitant à contacter un admin,
+qui peut réinitialiser le mot de passe depuis le front admin (page Utilisateurs).
 
 Déploiement : voir `DEPLOY_RAILWAY.md`.
 

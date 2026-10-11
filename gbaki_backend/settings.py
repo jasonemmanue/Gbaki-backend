@@ -140,6 +140,13 @@ DEFAULT_FROM_EMAIL  = os.environ.get('EMAIL_HOST_USER', '')
 # jusqu'au timeout de gunicorn. On abandonne vite avec un message clair.
 EMAIL_TIMEOUT       = int(os.environ.get('EMAIL_TIMEOUT', '10'))
 
+# ── API Gmail (HTTP, OAuth2) : voie d'envoi principale sur Railway ──────────────
+# Voir core/emailing.py et DEPLOY_RAILWAY.md pour obtenir ces valeurs.
+GMAIL_API_CLIENT_ID     = os.environ.get('GMAIL_API_CLIENT_ID', '')
+GMAIL_API_CLIENT_SECRET = os.environ.get('GMAIL_API_CLIENT_SECRET', '')
+GMAIL_API_REFRESH_TOKEN = os.environ.get('GMAIL_API_REFRESH_TOKEN', '')
+GMAIL_API_SENDER        = os.environ.get('GMAIL_API_SENDER', '')
+
 # ── Sécurité HTTPS ────────────────────────────────────────────────────────────
 if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
