@@ -42,7 +42,8 @@ Base : `/api/`. Authentification par token (`Authorization: Token <clé>`).
 | `POST auth/login/` | Connexion. Un compte non admin dont l'email n'est pas `@ensea.edu.ci` est refusé (403) |
 | `GET auth/me/` | Profil courant (même règle d'email) |
 | `POST auth/logout/` | Déconnexion |
-| `POST auth/forgot-password/`, `auth/verify-otp/`, `auth/reset-password/` | Mot de passe oublié (OTP par email) |
+| `POST auth/forgot-password/`, `auth/verify-otp/`, `auth/reset-password/` | Mot de passe oublié (OTP par email). Si l'email ne part pas (SMTP bloqué), réponse 503 en moins de 10 s avec un message invitant à contacter un admin |
+| `POST admin/users/<profile_id>/reset-password/` | Admin uniquement : `{"new_password": "…"}` (8 caractères min.), remplace le mot de passe et ferme les sessions |
 
 Les comptes `is_staff` / `is_superuser` (admins) ne sont pas soumis à la règle d'email.
 
@@ -145,6 +146,7 @@ variables du service `Gbaki-backend` :
 | `GBAKI_INDEX=1` | `index_documents` (reprend où il s'était arrêté) |
 | `GBAKI_INDEX_RETRY=1` | `index_documents --retry-empty` |
 | `GBAKI_INDEX_WORKERS` | Nombre de threads (4 par défaut) |
+| `GBAKI_ADMIN_EMAIL` + `GBAKI_ADMIN_PASSWORD` | `create_admin` : crée ou promeut ce compte administrateur |
 
 Retirer les variables une fois les tâches terminées. Suivi : `railway logs --service Gbaki-backend`.
 
@@ -159,7 +161,7 @@ pip install -r requirements.txt
 python manage.py migrate
 python manage.py create_admin --email admin@exemple.com --password '…'
 python manage.py runserver 8000
-python manage.py test core       # 18 tests (la correction orthographique n'est testée que sous PostgreSQL)
+python manage.py test core       # 21 tests (la correction orthographique n'est testée que sous PostgreSQL)
 ```
 
 Sans `DATABASE_URL`, la base est SQLite ; la recherche plein texte passe alors par un repli
@@ -181,7 +183,13 @@ CF_R2_THUMBS_PREFIX=_thumbs            # préfixe des vignettes
 EMAIL_HOST_USER=…
 EMAIL_HOST_PASSWORD=…
 CORS_ALLOW_ALL=True
+EMAIL_TIMEOUT=10                       # secondes avant d'abandonner l'envoi SMTP
 ```
+
+**Emails** : Railway bloque le SMTP sortant sur l'offre Hobby. Le code de « mot de passe oublié »
+ne part donc pas tant que le projet n'est pas en offre Pro ou relié à un service d'envoi par API
+(Brevo, Resend…). En attendant, un admin réinitialise le mot de passe depuis le front admin
+(page Utilisateurs).
 
 Déploiement : voir `DEPLOY_RAILWAY.md`.
 

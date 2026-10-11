@@ -136,6 +136,9 @@ EMAIL_USE_TLS       = True
 EMAIL_HOST_USER     = os.environ.get('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
 DEFAULT_FROM_EMAIL  = os.environ.get('EMAIL_HOST_USER', '')
+# Railway (offre Hobby) bloque le SMTP sortant : sans délai, la requête resterait bloquée
+# jusqu'au timeout de gunicorn. On abandonne vite avec un message clair.
+EMAIL_TIMEOUT       = int(os.environ.get('EMAIL_TIMEOUT', '10'))
 
 # ── Sécurité HTTPS ────────────────────────────────────────────────────────────
 if not DEBUG:

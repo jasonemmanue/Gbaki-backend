@@ -229,3 +229,38 @@ class FulltextSearchTests(TestCase):
         data = search_fulltext('intervale de confiance')
         self.assertTrue(data['corrections'])
         self.assertGreater(data['count'], 0)
+
+
+class AdminResetPasswordTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.student = User.objects.create_user(username='eleve@ensea.edu.ci', email='eleve@ensea.edu.ci', password='ancien123')
+        Token.objects.create(user=self.student)
+        self.profile = Profile.objects.create(email='eleve@ensea.edu.ci', role='student')
+        self.admin = User.objects.create_user(username='admin', email='admin@gmail.com', password='x' * 8, is_staff=True)
+        self.url = f'/api/admin/users/{self.profile.id}/reset-password/'
+
+    def test_admin_resets_password_and_closes_sessions(self):
+        self.client.force_authenticate(self.admin)
+        r = self.client.post(self.url, {'new_password': 'nouveau2026'}, format='json')
+        self.assertEqual(r.status_code, 200)
+        self.student.refresh_from_db()
+        self.assertTrue(self.student.check_password('nouveau2026'))
+        self.assertFalse(Token.objects.filter(user=self.student).exists())
+
+    def test_refused_for_students_and_short_passwords(self):
+        self.client.force_authenticate(self.student)
+        self.assertEqual(self.client.post(self.url, {'new_password': 'nouveau2026'}, format='json').status_code, 403)
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.client.post(self.url, {'new_password': 'court'}, format='json').status_code, 400)
+
+
+@override_settings(EMAIL_HOST_USER='gbaki@gmail.com', EMAIL_HOST_PASSWORD='x')
+class ForgotPasswordMailFailureTests(TestCase):
+    def test_smtp_failure_returns_clear_message(self):
+        from unittest import mock
+        User.objects.create_user(username='eleve@ensea.edu.ci', email='eleve@ensea.edu.ci', password='x' * 8)
+        with mock.patch('core.auth_views.send_mail', side_effect=TimeoutError('timed out')):
+            r = APIClient().post('/api/auth/forgot-password/', {'email': 'eleve@ensea.edu.ci'}, format='json')
+        self.assertEqual(r.status_code, 503)
+        self.assertIn('administrateur', r.json()['error'])

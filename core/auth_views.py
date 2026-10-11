@@ -12,6 +12,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.authtoken.models import Token
 from .models import Profile, OTPCode
+import logging
 import random
 import re
 import string
@@ -39,6 +40,13 @@ def _profile_data(profile):
         'is_first_login': profile.class_id is None,
     }
 
+
+logger = logging.getLogger(__name__)
+
+EMAIL_UNAVAILABLE_ERROR = (
+    "L'envoi du code par email est momentanément indisponible. "
+    "Demande à un administrateur de réinitialiser ton mot de passe."
+)
 
 ENSEA_EMAIL_RE = re.compile(r'^[a-z0-9][a-z0-9._-]*@ensea\.edu\.ci$')
 ENSEA_EMAIL_ERROR = "Seules les adresses institutionnelles au format nom@ensea.edu.ci sont acceptées."
@@ -235,21 +243,23 @@ def forgot_password(request):
 
     try:
         send_mail(
-            subject='GBAKI — Votre code de réinitialisation',
+            subject='GBAKI : votre code de réinitialisation',
             message=(
                 f"Bonjour {user.first_name or user.email},\n\n"
                 f"Votre code de réinitialisation de mot de passe est :\n\n"
                 f"    {otp}\n\n"
                 f"Ce code est valable 10 minutes.\n"
                 f"Si vous n'avez pas demandé de réinitialisation, ignorez cet email.\n\n"
-                f"— L'équipe GBAKI / ENSEA Data Science Club"
+                f"L'équipe GBAKI, ENSEA Data Science Club"
             ),
             from_email=email_user,
             recipient_list=[email],
             fail_silently=False,
         )
     except Exception as e:
-        return Response({'error': f'Erreur envoi email : {str(e)}'}, status=500)
+        logger.warning("Envoi de l'OTP à %s impossible : %s", email, e)
+        OTPCode.objects.filter(email=email).delete()
+        return Response({'error': EMAIL_UNAVAILABLE_ERROR}, status=503)
 
     return Response({'message': 'Si cet email est enregistré, un code vous a été envoyé.'})
 
@@ -334,3 +344,41 @@ def reset_password(request):
     entry.delete()
 
     return Response({'message': 'Mot de passe réinitialisé avec succès. Vous pouvez vous connecter.'})
+
+
+# ── Administration : réinitialisation du mot de passe d'un utilisateur ───────
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def admin_reset_password(request, profile_id):
+    """
+    POST /api/admin/users/<profile_id>/reset-password/
+    Body : { "new_password": "..." }  (réservé aux comptes staff / superuser)
+
+    Remplace le mot de passe de tous les comptes portant l'email du profil et
+    ferme leurs sessions. Sert notamment quand l'envoi d'email est indisponible.
+    """
+    if not _is_staff(request.user):
+        return Response({'error': 'Réservé aux administrateurs.'}, status=status.HTTP_403_FORBIDDEN)
+
+    new_password = request.data.get('new_password', '')
+    if len(new_password) < 8:
+        return Response({'error': 'Le nouveau mot de passe doit contenir au moins 8 caractères.'},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    profile = Profile.objects.filter(pk=profile_id).first()
+    if profile is None:
+        return Response({'error': 'Profil introuvable.'}, status=status.HTTP_404_NOT_FOUND)
+
+    users = _users_by_email(profile.email)
+    if not users:
+        return Response({'error': "Aucun compte de connexion n'est lié à ce profil."},
+                        status=status.HTTP_404_NOT_FOUND)
+    for user in users:
+        user.set_password(new_password)
+        user.save(update_fields=['password'])
+        Token.objects.filter(user=user).delete()
+    OTPCode.objects.filter(email__iexact=profile.email).delete()
+
+    logger.info("Mot de passe de %s réinitialisé par %s", profile.email, request.user.email or request.user.username)
+    return Response({'message': f'Mot de passe de {profile.email} réinitialisé.'})

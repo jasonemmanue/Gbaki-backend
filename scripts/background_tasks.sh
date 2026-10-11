@@ -4,7 +4,13 @@
 #   GBAKI_IMPORT_CATALOGUE=1  import du catalogue (data/catalogue), sauvegarde R2 de l'ancien,
 #                             sans effet si la base est déjà à jour
 #   GBAKI_INDEX=1             indexation plein texte + vignettes (reprend où elle s'est arrêtée)
+#   GBAKI_INDEX_RETRY=1       relance les documents restés sans texte
+#   GBAKI_ADMIN_EMAIL + GBAKI_ADMIN_PASSWORD   crée ou promeut ce compte administrateur
 set -u
+if [ -n "${GBAKI_ADMIN_EMAIL:-}" ] && [ -n "${GBAKI_ADMIN_PASSWORD:-}" ]; then
+  echo "[tasks] create_admin ${GBAKI_ADMIN_EMAIL}"
+  python manage.py create_admin --email "$GBAKI_ADMIN_EMAIL" --password "$GBAKI_ADMIN_PASSWORD" --keep-duplicates
+fi
 if [ "${GBAKI_IMPORT_CATALOGUE:-0}" = "1" ]; then
   echo "[tasks] import_catalogue"
   python manage.py import_catalogue --confirm --if-needed --backup-r2 || { echo "[tasks] import en échec"; exit 1; }

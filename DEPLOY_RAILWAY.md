@@ -34,6 +34,18 @@ railway redeploy --service Gbaki-backend --yes
 railway logs --service Gbaki-backend
 ```
 
+Ajouter un administrateur (le mot de passe ne passe que par les variables Railway, retirées ensuite) :
+
+```bash
+railway variable set GBAKI_ADMIN_EMAIL=prenom.nom@exemple.com --service Gbaki-backend --skip-deploys
+railway variable set GBAKI_ADMIN_PASSWORD --stdin --service Gbaki-backend   # saisir le mot de passe, redéploie
+railway logs --service Gbaki-backend | grep create_admin                     # « Admin prêt : … »
+railway variable delete GBAKI_ADMIN_PASSWORD --service Gbaki-backend
+railway variable delete GBAKI_ADMIN_EMAIL --service Gbaki-backend
+```
+
+SMTP : bloqué en sortie sur l'offre Hobby de Railway (l'email « mot de passe oublié » ne part pas).
+
 ## Fronts Next.js
 
 Chaque front a un `Dockerfile` (build Next.js, `next start` sur `$PORT`) et un `.railwayignore`.

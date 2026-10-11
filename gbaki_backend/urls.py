@@ -6,7 +6,9 @@ from core.views import (
     AcademicYearViewSet, DocumentTypeViewSet, DocumentViewSet, TeacherViewSet,
     autocomplete_teachers, autocomplete_documents, fulltext_search, notifications_today,
 )
-from core.auth_views import register, login_view, logout_view, me, forgot_password, verify_otp, reset_password
+from core.auth_views import (
+    register, login_view, logout_view, me, forgot_password, verify_otp, reset_password, admin_reset_password,
+)
 
 router = DefaultRouter()
 router.register(r'classes',        ClassViewSet)
@@ -26,6 +28,7 @@ urlpatterns = [
     path('api/auth/forgot-password/',   forgot_password,         name='auth-forgot-password'),
     path('api/auth/verify-otp/',        verify_otp,              name='auth-verify-otp'),
     path('api/auth/reset-password/',    reset_password,          name='auth-reset-password'),
+    path('api/admin/users/<uuid:profile_id>/reset-password/', admin_reset_password, name='admin-reset-password'),
     path('api/autocomplete/teachers/',  autocomplete_teachers,   name='autocomplete-teachers'),
     path('api/autocomplete/documents/', autocomplete_documents,  name='autocomplete-docs'),
     path('api/search/fulltext/',        fulltext_search,         name='search-fulltext'),
