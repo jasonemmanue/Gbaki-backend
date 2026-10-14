@@ -8,6 +8,8 @@
 #   GBAKI_INDEX_RETRY=1       relance les documents restés sans texte
 #   GBAKI_ADMIN_EMAIL + GBAKI_ADMIN_PASSWORD   crée ou promeut ce compte administrateur
 set -u
+# Voie d'envoi des codes « mot de passe oublié » (noms seulement, jamais les valeurs)
+python manage.py shell -c "from django.conf import settings as s; from core.emailing import gmail_api_configured as g; print('[tasks] email :', 'API Gmail configurée' if g() else ('SMTP seul (bloqué sur Railway)' if s.EMAIL_HOST_USER else 'AUCUNE voie configurée'))"
 if [ -n "${GBAKI_ADMIN_EMAIL:-}" ] && [ -n "${GBAKI_ADMIN_PASSWORD:-}" ]; then
   echo "[tasks] create_admin ${GBAKI_ADMIN_EMAIL}"
   python manage.py create_admin --email "$GBAKI_ADMIN_EMAIL" --password "$GBAKI_ADMIN_PASSWORD" --keep-duplicates

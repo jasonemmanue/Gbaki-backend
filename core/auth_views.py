@@ -12,6 +12,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.authtoken.models import Token
+from .authentication import needs_verification
 from .emailing import send_email
 from .models import Profile, OTPCode
 import logging
@@ -40,15 +41,22 @@ def _profile_data(profile):
         'class_code':     profile.class_id.code    if profile.class_id else None,
         'class_label':    profile.class_id.label   if profile.class_id else None,
         'is_first_login': profile.class_id is None,
+        'email_verified': profile.email_verified,
     }
 
 
 logger = logging.getLogger(__name__)
 
+VERIFY_UNAVAILABLE_ERROR = (
+    "L'envoi du code de vérification est momentanément indisponible. Réessaie dans quelques minutes."
+)
+
 EMAIL_UNAVAILABLE_ERROR = (
     "L'envoi du code par email est momentanément indisponible. "
     "Demande à un administrateur de réinitialiser ton mot de passe."
 )
+
+OTP_MAX_ATTEMPTS = 5   # codes faux acceptés avant d'invalider le code
 
 ENSEA_EMAIL_RE = re.compile(r'^[a-z0-9][a-z0-9._-]*@ensea\.edu\.ci$')
 ENSEA_EMAIL_ERROR = "Seules les adresses institutionnelles au format nom@ensea.edu.ci sont acceptées."
@@ -90,6 +98,87 @@ def _authenticate_by_email(email, password):
     return authenticate(username=email, password=password)
 
 
+_CODE_TEXTS = {
+    OTPCode.PURPOSE_RESET: (
+        'Gbaki-AI : votre code de réinitialisation',
+        'Votre code de réinitialisation de mot de passe Gbaki-AI est :',
+        "Si vous n'avez pas demandé de réinitialisation, ignorez cet email.",
+    ),
+    OTPCode.PURPOSE_VERIFY: (
+        'Gbaki-AI : confirmez votre adresse ENSEA',
+        'Votre code de vérification Gbaki-AI est :',
+        "Si vous n'avez pas créé de compte Gbaki-AI, ignorez cet email : "
+        "sans ce code, personne ne peut utiliser votre adresse.",
+    ),
+}
+
+
+def _send_code(email, name, purpose) -> bool:
+    """
+    Remplace le code en cours (même usage) par un nouveau code 4 chiffres valable
+    10 minutes et l'envoie (API Gmail en priorité, SMTP sinon : core/emailing.py).
+    Retourne False si aucun envoi n'a abouti (le code est alors supprimé).
+    """
+    OTPCode.objects.filter(email=email, purpose=purpose).delete()
+    otp = _generate_otp()
+    OTPCode.objects.create(email=email, purpose=purpose, code=otp,
+                           expires_at=timezone.now() + timezone.timedelta(minutes=10))
+
+    name = name or email.split('@')[0]
+    subject, intro, outro = _CODE_TEXTS[purpose]
+    text = (
+        f"Bonjour {name},\n\n{intro}\n\n    {otp}\n\n"
+        f"Ce code est valable 10 minutes.\n{outro}\n\n"
+        f"L'équipe Gbaki-AI, ENSEA Data Science Club"
+    )
+    html = (
+        '<div style="font-family:Arial,sans-serif;max-width:460px;margin:auto;color:#1b2430">'
+        '<h2 style="margin:0 0 12px">Gbaki-AI</h2>'
+        f'<p>Bonjour {escape(name)},</p>'
+        f'<p>{escape(intro)}</p>'
+        f'<p style="font-size:30px;font-weight:bold;letter-spacing:8px;margin:18px 0">{otp}</p>'
+        '<p>Ce code est valable <strong>10 minutes</strong>.</p>'
+        f'<p style="color:#6b7480;font-size:13px">{escape(outro)}</p>'
+        '<p style="color:#6b7480;font-size:13px">L\'équipe Gbaki-AI, ENSEA Data Science Club</p></div>'
+    )
+    try:
+        send_email(email, subject, text, html)
+        return True
+    except Exception as e:
+        logger.warning("Envoi du code (%s) à %s impossible : %s", purpose, email, e)
+        OTPCode.objects.filter(email=email, purpose=purpose).delete()
+        return False
+
+
+def _check_code(email, code, purpose):
+    """Retourne (entrée OTP valide, None) ou (None, message d'erreur). Compte les essais faux."""
+    entry = OTPCode.objects.filter(email=email, purpose=purpose).order_by('-created_at').first()
+    if entry is None:
+        return None, 'Aucun code trouvé pour cet email. Demandez un nouveau code.'
+    if entry.is_expired():
+        entry.delete()
+        return None, 'Code expiré. Demandez un nouveau code.'
+    if entry.reset_token:
+        return None, 'Code déjà utilisé. Demandez un nouveau code.'
+    if entry.code != code:
+        entry.attempts += 1
+        left = OTP_MAX_ATTEMPTS - entry.attempts
+        if left <= 0:
+            entry.delete()
+            return None, "Trop d'essais. Demandez un nouveau code."
+        entry.save(update_fields=['attempts'])
+        return None, f'Code incorrect. Encore {left} essai{"s" if left > 1 else ""}.'
+    return entry, None
+
+
+def _verification_pending(email):
+    return Response({
+        'verification_required': True,
+        'email': email,
+        'message': f'Un code à 4 chiffres a été envoyé à {email}.',
+    }, status=status.HTTP_202_ACCEPTED)
+
+
 # ── Auth classique ───────────────────────────────────────────────────────────
 
 @api_view(['POST'])
@@ -107,9 +196,12 @@ def register(request):
     if len(password) < 6:
         return Response({'error': 'Le mot de passe doit contenir au moins 6 caractères.'}, status=status.HTTP_400_BAD_REQUEST)
     existing = User.objects.filter(Q(username__iexact=email) | Q(email__iexact=email))
-    # Compte orphelin : profil supprimé depuis l'admin avant la correction de la suppression.
-    # Un étudiant sans profil n'a plus d'existence dans l'app : on libère l'adresse.
-    if existing.exists() and not Profile.objects.filter(email__iexact=email).exists() \
+    profile  = Profile.objects.filter(email__iexact=email).first()
+    # On libère l'adresse quand le compte n'appartient à personne :
+    # - compte orphelin (profil supprimé depuis l'admin avant la correction de la suppression) ;
+    # - compte jamais vérifié par code email (n'importe qui a pu le créer avec cette adresse).
+    unclaimed = profile is None or (django_settings.EMAIL_VERIFICATION and not profile.email_verified)
+    if existing.exists() and unclaimed \
             and not existing.filter(Q(is_staff=True) | Q(is_superuser=True)).exists():
         existing.delete()
     if existing.exists():
@@ -123,8 +215,16 @@ def register(request):
     role = _resolve_role(user)
     profile, _ = Profile.objects.update_or_create(
         email=email,
-        defaults={'full_name': full_name or email, 'role': role, 'is_active': True, 'class_id': None}
+        defaults={'full_name': full_name or email, 'role': role, 'is_active': True, 'class_id': None,
+                  'email_verified': not django_settings.EMAIL_VERIFICATION}
     )
+    if django_settings.EMAIL_VERIFICATION:
+        if not _send_code(email, user.first_name, OTPCode.PURPOSE_VERIFY):
+            user.delete()
+            profile.delete()
+            return Response({'error': VERIFY_UNAVAILABLE_ERROR}, status=503)
+        return _verification_pending(email)
+
     token, _ = Token.objects.get_or_create(user=user)
     return Response({'token': token.key, 'is_first_login': True, 'profile': _profile_data(profile)}, status=status.HTTP_201_CREATED)
 
@@ -146,7 +246,16 @@ def login_view(request):
         return Response({'error': 'Compte désactivé.'}, status=status.HTTP_403_FORBIDDEN)
     if not _is_staff(user) and not _is_ensea_email(email):
         return Response({'error': ENSEA_EMAIL_ERROR}, status=status.HTTP_403_FORBIDDEN)
+    if needs_verification(user):
+        if not _send_code(email, user.first_name, OTPCode.PURPOSE_VERIFY):
+            return Response({'error': VERIFY_UNAVAILABLE_ERROR}, status=503)
+        return _verification_pending(email)
 
+    return _session_response(user, email)
+
+
+def _session_response(user, email):
+    """Profil créé ou mis à jour, jeton de session : la réponse d'une connexion réussie."""
     role         = _resolve_role(user)
     display_name = f"{user.first_name} {user.last_name}".strip() or user.email or email
 
@@ -172,6 +281,56 @@ def login_view(request):
         'is_first_login': profile.class_id is None,
         'profile': _profile_data(profile),
     })
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def verify_email(request):
+    """
+    POST /api/auth/verify-email/
+    Body : { "email": "nom@ensea.edu.ci", "code": "1234" }
+
+    Valide le code envoyé à l'inscription (ou à la 1re connexion), marque l'adresse
+    comme vérifiée et ouvre la session (même réponse que /auth/login/).
+    """
+    email = request.data.get('email', '').strip().lower()
+    code  = request.data.get('code', '').strip()
+    if not email or not code:
+        return Response({'error': 'Email et code requis.'}, status=400)
+
+    entry, error = _check_code(email, code, OTPCode.PURPOSE_VERIFY)
+    if error:
+        return Response({'error': error}, status=400)
+
+    users = [u for u in _users_by_email(email) if u.is_active]
+    if not users:
+        entry.delete()
+        return Response({'error': 'Compte introuvable. Recommence l\'inscription.'}, status=404)
+
+    entry.delete()
+    profile = Profile.objects.filter(email__iexact=email).first()
+    if profile is None:
+        Profile.objects.create(email=email, full_name=users[0].get_full_name() or email,
+                               role=_resolve_role(users[0]), is_active=True, email_verified=True)
+    elif not profile.email_verified:
+        profile.email_verified = True
+        profile.save(update_fields=['email_verified'])
+    return _session_response(users[0], email)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def resend_verification(request):
+    """
+    POST /api/auth/resend-verification/
+    Body : { "email": "nom@ensea.edu.ci" }   — renvoie un code si le compte attend sa vérification.
+    """
+    email = request.data.get('email', '').strip().lower()
+    users = _users_by_email(email) if email else []
+    if users and needs_verification(users[0]):
+        if not _send_code(email, users[0].first_name, OTPCode.PURPOSE_VERIFY):
+            return Response({'error': VERIFY_UNAVAILABLE_ERROR}, status=503)
+    return Response({'message': 'Si ce compte attend sa vérification, un nouveau code a été envoyé.'})
 
 
 @api_view(['POST'])
@@ -231,40 +390,7 @@ def forgot_password(request):
         return Response({'message': 'Si cet email est enregistré, un code vous a été envoyé.'})
     user = users[0]
 
-    # Supprimer tous les anciens OTP pour cet email (nettoyage)
-    OTPCode.objects.filter(email=email).delete()
-
-    # Créer le nouvel OTP en base
-    otp        = _generate_otp()
-    expires_at = timezone.now() + timezone.timedelta(minutes=10)
-    OTPCode.objects.create(email=email, code=otp, expires_at=expires_at)
-
-    # Envoyer l'email (API Gmail en priorité, SMTP sinon : voir core/emailing.py)
-    name = user.first_name or email.split('@')[0]
-    text = (
-        f"Bonjour {name},\n\n"
-        f"Votre code de réinitialisation de mot de passe Gbaki-AI est :\n\n"
-        f"    {otp}\n\n"
-        f"Ce code est valable 10 minutes.\n"
-        f"Si vous n'avez pas demandé de réinitialisation, ignorez cet email.\n\n"
-        f"L'équipe Gbaki-AI, ENSEA Data Science Club"
-    )
-    html = (
-        '<div style="font-family:Arial,sans-serif;max-width:460px;margin:auto;color:#1b2430">'
-        '<h2 style="margin:0 0 12px">Gbaki-AI</h2>'
-        f'<p>Bonjour {escape(name)},</p>'
-        '<p>Votre code de réinitialisation de mot de passe est :</p>'
-        f'<p style="font-size:30px;font-weight:bold;letter-spacing:8px;margin:18px 0">{otp}</p>'
-        '<p>Ce code est valable <strong>10 minutes</strong>.</p>'
-        '<p style="color:#6b7480;font-size:13px">Si vous n\'avez pas demandé de réinitialisation, '
-        'ignorez cet email.</p>'
-        '<p style="color:#6b7480;font-size:13px">L\'équipe Gbaki-AI, ENSEA Data Science Club</p></div>'
-    )
-    try:
-        send_email(email, 'Gbaki-AI : votre code de réinitialisation', text, html)
-    except Exception as e:
-        logger.warning("Envoi de l'OTP à %s impossible : %s", email, e)
-        OTPCode.objects.filter(email=email).delete()
+    if not _send_code(email, user.first_name, OTPCode.PURPOSE_RESET):
         return Response({'error': EMAIL_UNAVAILABLE_ERROR}, status=503)
 
     return Response({'message': 'Si cet email est enregistré, un code vous a été envoyé.'})
@@ -285,18 +411,9 @@ def verify_otp(request):
     if not email or not code:
         return Response({'error': 'Email et code requis.'}, status=400)
 
-    # Chercher le dernier OTP actif pour cet email
-    try:
-        entry = OTPCode.objects.filter(email=email).latest('created_at')
-    except OTPCode.DoesNotExist:
-        return Response({'error': 'Aucun code trouvé pour cet email.'}, status=400)
-
-    if entry.is_expired():
-        entry.delete()
-        return Response({'error': 'Code expiré. Demandez un nouveau code.'}, status=400)
-
-    if entry.code != code:
-        return Response({'error': 'Code incorrect.'}, status=400)
+    entry, error = _check_code(email, code, OTPCode.PURPOSE_RESET)
+    if error:
+        return Response({'error': error}, status=400)
 
     # Code valide → générer un reset_token et prolonger la validité à 15 min
     reset_token        = _generate_reset_token()
@@ -325,9 +442,8 @@ def reset_password(request):
     if len(new_password) < 6:
         return Response({'error': 'Le mot de passe doit contenir au moins 6 caractères.'}, status=400)
 
-    try:
-        entry = OTPCode.objects.filter(email=email).latest('created_at')
-    except OTPCode.DoesNotExist:
+    entry = OTPCode.objects.filter(email=email, purpose=OTPCode.PURPOSE_RESET).order_by('-created_at').first()
+    if entry is None or not entry.reset_token:
         return Response({'error': 'Token invalide ou expiré.'}, status=400)
 
     if entry.reset_token != reset_token:
@@ -345,6 +461,9 @@ def reset_password(request):
         user.set_password(new_password)
         user.save()
         Token.objects.filter(user=user).delete()   # invalider les sessions actives
+
+    # Le code reçu par email prouve que l'adresse appartient bien à l'utilisateur
+    Profile.objects.filter(email__iexact=email).update(email_verified=True)
 
     # Supprimer l'OTP utilisé
     entry.delete()

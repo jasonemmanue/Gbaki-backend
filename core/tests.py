@@ -3,6 +3,7 @@ import shutil
 import tempfile
 from pathlib import Path
 from unittest import skipUnless
+from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth.models import User
@@ -89,6 +90,7 @@ class ImportCatalogueTests(TestCase):
         self.assertEqual(doc.subject_id.class_id.code, 'AS1')
 
 
+@override_settings(EMAIL_VERIFICATION=False)
 class EmailRuleTests(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -115,6 +117,57 @@ class EmailRuleTests(TestCase):
         self.assertEqual(self.client.get('/api/auth/me/').status_code, 403)
 
 
+class EmailVerificationTests(TestCase):
+    """Un compte étudiant n'appartient à personne tant que l'adresse n'est pas prouvée par code."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.sent = []
+        patcher = patch('core.auth_views.send_email', side_effect=lambda to, subject, text, html: self.sent.append(text))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _code(self, email):
+        return OTPCode.objects.get(email=email, purpose=OTPCode.PURPOSE_VERIFY).code
+
+    def test_register_requires_code_before_session(self):
+        r = self.client.post('/api/auth/register/', {'email': 'jean@ensea.edu.ci', 'password': 'secret123'}, format='json')
+        self.assertEqual(r.status_code, 202)
+        self.assertNotIn('token', r.data)
+        self.assertEqual(len(self.sent), 1)
+        bad = '0000' if self._code('jean@ensea.edu.ci') != '0000' else '1111'
+        self.assertEqual(self.client.post('/api/auth/verify-email/', {'email': 'jean@ensea.edu.ci', 'code': bad}, format='json').status_code, 400)
+        r = self.client.post('/api/auth/verify-email/', {'email': 'jean@ensea.edu.ci', 'code': self._code('jean@ensea.edu.ci')}, format='json')
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('token', r.data)
+        self.assertTrue(Profile.objects.get(email='jean@ensea.edu.ci').email_verified)
+
+    def test_unverified_account_can_be_reclaimed_and_old_token_refused(self):
+        user = User.objects.create_user(username='a@ensea.edu.ci', email='a@ensea.edu.ci', password='intrus123')
+        Profile.objects.create(email='a@ensea.edu.ci', role='student')
+        self.client.credentials(HTTP_AUTHORIZATION='Token ' + Token.objects.create(user=user).key)
+        self.assertEqual(self.client.get('/api/auth/me/').status_code, 401)
+        self.client.credentials()
+        r = self.client.post('/api/auth/register/', {'email': 'a@ensea.edu.ci', 'password': 'vrai1234'}, format='json')
+        self.assertEqual(r.status_code, 202)
+        self.assertFalse(User.objects.filter(pk=user.pk).exists())
+
+    def test_login_of_unverified_student_sends_code_and_locks_after_5_errors(self):
+        User.objects.create_user(username='b@ensea.edu.ci', email='b@ensea.edu.ci', password='secret123')
+        r = self.client.post('/api/auth/login/', {'email': 'b@ensea.edu.ci', 'password': 'secret123'}, format='json')
+        self.assertEqual(r.status_code, 202)
+        bad = '0000' if self._code('b@ensea.edu.ci') != '0000' else '1111'
+        for _ in range(5):
+            self.client.post('/api/auth/verify-email/', {'email': 'b@ensea.edu.ci', 'code': bad}, format='json')
+        self.assertFalse(OTPCode.objects.filter(email='b@ensea.edu.ci').exists())
+
+    def test_admin_is_not_asked_for_code(self):
+        User.objects.create_user(username='admin@gmail.com', email='admin@gmail.com', password='secret123', is_staff=True)
+        r = self.client.post('/api/auth/login/', {'email': 'admin@gmail.com', 'password': 'secret123'}, format='json')
+        self.assertEqual(r.status_code, 200)
+
+
+@override_settings(EMAIL_VERIFICATION=False)
 class ProfilePrivacyTests(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -154,6 +207,7 @@ def make_documents(n):
 
 
 @NO_R2
+@override_settings(EMAIL_VERIFICATION=False)
 class DocumentListTests(TestCase):
     def test_pagination(self):
         make_documents(7)
@@ -196,6 +250,7 @@ class LineAnalysisTests(TestCase):
         self.assertIsNone(analyse_line('rien à voir', parse_query('estimateur')))
 
 
+@override_settings(EMAIL_VERIFICATION=False)
 class FulltextSearchTests(TestCase):
     def setUp(self):
         docs = make_documents(2)
@@ -231,6 +286,7 @@ class FulltextSearchTests(TestCase):
         self.assertGreater(data['count'], 0)
 
 
+@override_settings(EMAIL_VERIFICATION=False)
 class AdminResetPasswordTests(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -309,6 +365,7 @@ class GmailApiTests(TestCase):
         self.assertFalse(OTPCode.objects.filter(email='eleve@ensea.edu.ci').exists())
 
 
+@override_settings(EMAIL_VERIFICATION=False)
 class DeleteAndReRegisterTests(TestCase):
     def setUp(self):
         self.client = APIClient()

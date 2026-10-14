@@ -8,6 +8,7 @@ from core.views import (
 )
 from core.auth_views import (
     register, login_view, logout_view, me, forgot_password, verify_otp, reset_password, admin_reset_password,
+    verify_email, resend_verification,
 )
 
 router = DefaultRouter()
@@ -23,6 +24,8 @@ urlpatterns = [
     path('admin/',                      admin.site.urls),
     path('api/auth/register/',          register,                name='auth-register'),
     path('api/auth/login/',             login_view,              name='auth-login'),
+    path('api/auth/verify-email/',      verify_email,            name='auth-verify-email'),
+    path('api/auth/resend-verification/', resend_verification, name='auth-resend-verification'),
     path('api/auth/logout/',            logout_view,             name='auth-logout'),
     path('api/auth/me/',                me,                      name='auth-me'),
     path('api/auth/forgot-password/',   forgot_password,         name='auth-forgot-password'),

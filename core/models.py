@@ -22,6 +22,8 @@ class Profile(models.Model):
     class_id = models.ForeignKey(
         Class, on_delete=models.SET_NULL, null=True, blank=True)
     is_active = models.BooleanField(default=True)
+    # Adresse prouvée par un code reçu par email ; sans cela le compte n'appartient à personne
+    email_verified = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -155,9 +157,14 @@ class OTPCode(models.Model):
     Stockage persistant des codes OTP pour la réinitialisation de mot de passe.
     Remplace le dictionnaire en mémoire (_otp_store) incompatible avec le serverless.
     """
+    PURPOSE_RESET  = 'reset'    # mot de passe oublié
+    PURPOSE_VERIFY = 'verify'   # vérification de l'adresse (inscription, 1re connexion)
+
     email       = models.EmailField(db_index=True)
+    purpose     = models.CharField(max_length=10, default=PURPOSE_RESET)
     code        = models.CharField(max_length=4)
     reset_token = models.CharField(max_length=20, blank=True, default='')
+    attempts    = models.PositiveSmallIntegerField(default=0)   # codes faux saisis
     expires_at  = models.DateTimeField()
     created_at  = models.DateTimeField(auto_now_add=True)
 

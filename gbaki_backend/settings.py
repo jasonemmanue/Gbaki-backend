@@ -103,7 +103,7 @@ CF_R2_THUMBS_PREFIX  = os.environ.get('CF_R2_THUMBS_PREFIX', '_thumbs')
 # ── DRF ──────────────────────────────────────────────────────────────────────
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.TokenAuthentication',
+        'core.authentication.VerifiedTokenAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticatedOrReadOnly',
@@ -146,6 +146,10 @@ GMAIL_API_CLIENT_ID     = os.environ.get('GMAIL_API_CLIENT_ID', '')
 GMAIL_API_CLIENT_SECRET = os.environ.get('GMAIL_API_CLIENT_SECRET', '')
 GMAIL_API_REFRESH_TOKEN = os.environ.get('GMAIL_API_REFRESH_TOKEN', '')
 GMAIL_API_SENDER        = os.environ.get('GMAIL_API_SENDER', '')
+
+# Vérification de l'adresse étudiante par code email (inscription et 1re connexion).
+# GBAKI_EMAIL_VERIFICATION=0 la suspend (ex. tant que l'API Gmail n'est pas configurée).
+EMAIL_VERIFICATION = os.environ.get('GBAKI_EMAIL_VERIFICATION', '1') != '0'
 
 # ── Sécurité HTTPS ────────────────────────────────────────────────────────────
 if not DEBUG:
