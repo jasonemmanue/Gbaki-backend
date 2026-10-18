@@ -147,6 +147,12 @@ variables du service `Gbaki-backend` :
 | `GBAKI_INDEX_RETRY=1` | `index_documents --retry-empty` |
 | `GBAKI_INDEX_WORKERS` | Nombre de threads (4 par défaut) |
 | `GBAKI_ADMIN_EMAIL` + `GBAKI_ADMIN_PASSWORD` | `create_admin` : crée ou promeut ce compte administrateur |
+| `GBAKI_PURGE_STUDENTS=dry-run` | `purge_students --dry-run` : rapport des comptes non admin, par classe |
+| `GBAKI_PURGE_STUDENTS=confirm` + `GBAKI_PURGE_BEFORE=<date ISO>` | `purge_students --confirm --before …` : supprime les comptes non admin créés avant la date |
+
+`purge_students` garde les comptes `is_staff` / `is_superuser` et leurs profils ; il supprime les
+autres comptes de connexion (et tokens), profils et codes OTP. `GBAKI_PURGE_BEFORE` est obligatoire
+en mode `confirm` : un redémarrage avec la variable oubliée n'efface pas les réinscriptions.
 
 Retirer les variables une fois les tâches terminées. Suivi : `railway logs --service Gbaki-backend`.
 

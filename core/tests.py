@@ -1,4 +1,5 @@
 import csv
+import io
 import shutil
 import tempfile
 from pathlib import Path
@@ -11,6 +12,7 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db import connection
 from django.test import TestCase, override_settings
+from django.utils import timezone
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
 
@@ -397,3 +399,56 @@ class DeleteAndReRegisterTests(TestCase):
         own = Profile.objects.create(email='admin@gmail.com', role='admin')
         self.client.force_authenticate(self.admin)
         self.assertEqual(self.client.delete(f'/api/profiles/{own.id}/').status_code, 400)
+
+
+class PurgeStudentsTests(TestCase):
+    def setUp(self):
+        self.as1 = Class.objects.create(code='AS1', label='AS 1')
+        self.ise1 = Class.objects.create(code='ISE1', label='ISE 1')
+        self.admin = User.objects.create_user(username='admin@gmail.com', email='admin@gmail.com', password='x' * 8, is_staff=True)
+        Profile.objects.create(email='admin@gmail.com', role='admin')
+        for email, cls in (('a@ensea.edu.ci', self.as1), ('b@ensea.edu.ci', self.ise1), ('c@ensea.edu.ci', None)):
+            user = User.objects.create_user(username=email, email=email, password='secret123')
+            Token.objects.create(user=user)
+            Profile.objects.create(email=email, role='student', class_id=cls)
+        User.objects.create_user(username='orphelin@ensea.edu.ci', email='orphelin@ensea.edu.ci', password='secret123')
+        OTPCode.objects.create(email='a@ensea.edu.ci', code='1234', expires_at=timezone.now())
+
+    def run_purge(self, *args):
+        out = io.StringIO()
+        call_command('purge_students', *args, stdout=out)
+        return out.getvalue()
+
+    def test_dry_run_deletes_nothing(self):
+        out = self.run_purge('--dry-run')
+        self.assertIn('Profils à supprimer : 3', out)
+        self.assertIn('Comptes de connexion à supprimer : 4', out)
+        self.assertEqual(Profile.objects.count(), 4)
+        self.assertEqual(User.objects.count(), 5)
+
+    def test_confirm_keeps_only_admins(self):
+        self.run_purge('--confirm')
+        self.assertEqual(list(User.objects.values_list('email', flat=True)), ['admin@gmail.com'])
+        self.assertEqual(list(Profile.objects.values_list('email', flat=True)), ['admin@gmail.com'])
+        self.assertFalse(Token.objects.exists())
+        self.assertFalse(OTPCode.objects.exists())
+        self.assertEqual(Class.objects.count(), 2)
+
+    def test_requires_confirm_or_dry_run(self):
+        with self.assertRaises(CommandError):
+            call_command('purge_students')
+        self.assertEqual(Profile.objects.count(), 4)
+
+    def test_refused_without_any_admin(self):
+        self.admin.delete()
+        with self.assertRaises(CommandError):
+            call_command('purge_students', '--confirm')
+        self.assertEqual(Profile.objects.count(), 4)
+
+    def test_before_spares_new_registrations(self):
+        cutoff = timezone.now()
+        late = User.objects.create_user(username='new@ensea.edu.ci', email='new@ensea.edu.ci', password='secret123')
+        Profile.objects.create(email='new@ensea.edu.ci', role='student')
+        self.run_purge('--confirm', '--before', cutoff.isoformat())
+        self.assertTrue(User.objects.filter(pk=late.pk).exists())
+        self.assertEqual(sorted(Profile.objects.values_list('email', flat=True)), ['admin@gmail.com', 'new@ensea.edu.ci'])
