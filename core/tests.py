@@ -73,7 +73,7 @@ class ImportCatalogueTests(TestCase):
 
     def test_import_replaces_catalogue_and_keeps_classes_and_teachers(self):
         call_command('import_catalogue', dir=str(self.tmp), confirm=True, stdout=open(tempfile.mktemp(), 'w', encoding='utf-8'))
-        self.assertEqual(AcademicYear.objects.count(), 23)
+        self.assertEqual(AcademicYear.objects.count(), 24)
         self.assertEqual(list(AcademicYear.objects.filter(is_active=True).values_list('label', flat=True)), ['2026-2027'])
         self.assertEqual(DocumentType.objects.count(), 13)
         self.assertEqual(Subject.objects.count(), 133)
