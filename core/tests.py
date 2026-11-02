@@ -91,6 +91,19 @@ class ImportCatalogueTests(TestCase):
         self.assertEqual(doc.subject_id.code, self.rows[0]['_code_matiere'])
         self.assertEqual(doc.subject_id.class_id.code, 'AS1')
 
+    def test_add_only_fills_size_of_files_uploaded_after_import(self):
+        out = open(tempfile.mktemp(), 'w', encoding='utf-8')
+        call_command('import_catalogue', dir=str(self.tmp), confirm=True, stdout=out)
+        key = next(r['Chemin Cloudflare R2 (cle objet)'] for r in self.rows if r['_projet'] != 'oui')
+        Document.objects.update(indexed_at=timezone.now())
+        with patch('core.management.commands.import_catalogue.r2_configured', return_value=True), \
+                patch('core.management.commands.import_catalogue.Command._r2_sizes', return_value={key: 1234}):
+            call_command('import_catalogue', dir=str(self.tmp), confirm=True, add_only=True, stdout=out)
+        doc = Document.objects.get(file_path=key)
+        self.assertEqual(doc.file_size, 1234)
+        self.assertIsNone(doc.indexed_at)
+        self.assertEqual(Document.objects.filter(indexed_at__isnull=True).count(), 1)
+
 
 @override_settings(EMAIL_VERIFICATION=False)
 class EmailRuleTests(TestCase):

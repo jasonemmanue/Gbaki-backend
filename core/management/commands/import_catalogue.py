@@ -13,7 +13,9 @@ Par défaut : supprime documents, matières, années académiques et types de
 documents, puis recrée tout. Avec --add-only (ou --if-needed quand la base ne
 contient que des documents présents dans les CSV) : ajoute seulement les années,
 types, matières et documents manquants ; l'existant et son index plein texte
-restent. Les classes, enseignants et profils ne sont pas touchés. Tout se fait
+restent. Un document déjà importé sans taille (fichier absent du bucket à
+l'import) reçoit sa taille s'il est maintenant dans R2, et repasse à indexer.
+Les classes, enseignants et profils ne sont pas touchés. Tout se fait
 dans une seule transaction. Les codes de classe sont comparés sans espaces
 (ISE1 = « ISE 1 »).
 
@@ -51,6 +53,11 @@ def read_all(base: Path, stem: str):
     for path in sorted(base.glob(f'{stem}*.csv')):
         rows += read_csv(path)
     return rows
+
+
+def file_size(sizes, key, is_folder):
+    """Taille d'un objet R2, ou somme d'un dossier ; None si la clé est absente."""
+    return sum(v for k, v in sizes.items() if k.startswith(key)) if is_folder else sizes.get(key)
 
 
 def class_key(code: str) -> str:
@@ -148,7 +155,9 @@ class Command(BaseCommand):
     def _add(self, years, types, subjects, docs, classes, opts):
         existing = set(Document.objects.values_list('file_path', flat=True))
         new_docs = [r for r in docs if r[PATH_COL] not in existing]
-        sizes = {} if opts['skip_r2'] or not new_docs or not r2_configured() else self._r2_sizes()
+        unsized = Document.objects.filter(file_size__isnull=True, file_path__in=[r[PATH_COL] for r in docs])
+        need_r2 = new_docs or unsized.exists()
+        sizes = {} if opts['skip_r2'] or not need_r2 or not r2_configured() else self._r2_sizes()
 
         with transaction.atomic():
             year_by_label = {y.label: y for y in AcademicYear.objects.all()}
@@ -178,6 +187,17 @@ class Command(BaseCommand):
                 new_docs, sizes, classes, subject_by_code, year_by_label, type_by_code)
             Document.objects.bulk_create(to_create, batch_size=500)
 
+            # Fichiers arrivés dans R2 après l'import : taille, puis réindexation
+            found = 0
+            for doc in unsized.only('id', 'file_path', 'is_folder') if sizes else []:
+                size = file_size(sizes, doc.file_path, doc.is_folder)
+                if size:
+                    Document.objects.filter(pk=doc.pk).update(file_size=size, indexed_at=None)
+                    found += 1
+            if found:
+                self.stdout.write(f"{found} document(s) déjà importé(s) maintenant présent(s) dans R2 : "
+                                  "taille ajoutée, à réindexer")
+
         per_class = Counter(r['Classe'] for r in new_docs)
         self.stdout.write(self.style.SUCCESS(
             f"Ajouté : {added_subjects} matières, {len(to_create)} documents {dict(per_class)} "
@@ -192,8 +212,7 @@ class Command(BaseCommand):
             cls = classes[class_key(r['Classe'])]
             is_folder = r['_projet'].strip().lower() == 'oui' or key.endswith('/')
             if sizes:
-                size = (sum(v for k, v in sizes.items() if k.startswith(key)) if is_folder
-                        else sizes.get(key))
+                size = file_size(sizes, key, is_folder)
                 if not size and size != 0:
                     absent.append(key)
             else:
